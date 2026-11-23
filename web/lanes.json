@@ -1,0 +1,18 @@
+{
+  "_comment": "Couloirs de la frise. Un couloir regroupe plusieurs éléments Wikidata (le pays actuel et ses formes historiques). QID à vérifier/compléter sur wikidata.org. « _ » = événements sans pays.",
+  "lanes": [
+    { "id": "fr", "name": "France", "qids": ["Q142"], "on": true },
+    { "id": "de", "name": "Allemagne", "qids": ["Q183", "Q7318", "Q41304", "Q43287", "Q713750", "Q16957"], "on": true },
+    { "id": "gb", "name": "Royaume-Uni", "qids": ["Q145"], "on": true },
+    { "id": "us", "name": "États-Unis", "qids": ["Q30"], "on": true },
+    { "id": "ru", "name": "Russie / URSS", "qids": ["Q159", "Q15180", "Q34266"], "on": true },
+    { "id": "jp", "name": "Japon", "qids": ["Q17", "Q188712"], "on": true },
+    { "id": "cn", "name": "Chine", "qids": ["Q148", "Q13426199"], "on": false },
+    { "id": "id", "name": "Indonésie", "qids": ["Q252", "Q188161"], "on": true },
+    { "id": "dz", "name": "Algérie", "qids": ["Q262"], "on": true },
+    { "id": "it", "name": "Italie", "qids": ["Q38", "Q172579"], "on": false },
+    { "id": "pl", "name": "Pologne", "qids": ["Q36", "Q207313"], "on": false },
+    { "id": "in", "name": "Inde", "qids": ["Q668", "Q129286"], "on": false },
+    { "id": "world", "name": "Monde (sans pays)", "qids": ["_"], "on": true }
+  ]
+}

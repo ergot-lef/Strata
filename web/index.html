@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strata — frise du monde</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="logo">Strata</div>
+    <div class="search">
+      <label class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+        <span class="sr-only">Rechercher un événement</span>
+        <input id="search" type="search" placeholder="Rechercher un événement…" autocomplete="off">
+      </label>
+      <ul id="search-results" class="search-results" hidden></ul>
+    </div>
+    <div class="zoom" role="group" aria-label="Niveau de zoom">
+      <button data-zoom="ere">Ère</button>
+      <button data-zoom="siecle">Siècle</button>
+      <button data-zoom="annee">Année</button>
+      <button data-zoom="mois">Mois</button>
+      <button data-zoom="jour">Jour</button>
+      <button data-zoom="heure">Heure</button>
+    </div>
+    <label class="goto">
+      <span class="sr-only">Aller à une date</span>
+      <input id="goto" type="text" placeholder="Aller à : 1945-05-08, -500, 66e6…">
+    </label>
+  </header>
+
+  <section class="overview" aria-label="Vue d'ensemble du temps">
+    <div class="overview-title">Tout le temps — échelle logarithmique (cliquer pour y aller)</div>
+    <div id="overview" class="overview-bar"></div>
+  </section>
+
+  <div class="body">
+    <aside class="sidebar" aria-label="Filtres et calques">
+      <div class="block">
+        <div class="block-title">Courbe de fond</div>
+        <div id="series-list"></div>
+      </div>
+      <div class="block">
+        <div class="block-title">Thèmes</div>
+        <div id="themes" class="chips"></div>
+      </div>
+      <div class="block">
+        <div class="block-title">Langue des titres</div>
+        <div id="langs" class="chips"></div>
+      </div>
+      <div class="block">
+        <div class="block-title">Couloirs</div>
+        <div id="lanes-list"></div>
+        <details class="more">
+          <summary>Autres pays présents</summary>
+          <div id="other-countries"></div>
+        </details>
+      </div>
+      <div class="block small" id="db-stats"></div>
+    </aside>
+
+    <main class="main">
+      <div class="main-head">
+        <h1 id="title">…</h1>
+        <span id="series-value" class="muted"></span>
+        <span id="loading" class="muted" hidden>chargement…</span>
+      </div>
+      <div id="timeline" class="timeline" tabindex="0" aria-label="Frise : molette pour zoomer, glisser pour se déplacer">
+        <svg id="curve" class="curve" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div id="ruler" class="ruler"></div>
+        <div id="lanes" class="lanes"></div>
+        <div id="hover" class="hover" hidden><div class="hover-label"></div></div>
+        <div id="empty" class="empty" hidden></div>
+      </div>
+      <div class="legend muted">Molette : zoom · glisser : se déplacer · double-clic : zoom avant · bandes hachurées = événement qui dure · pointillé = date connue seulement à l'année ou au mois</div>
+      <article id="detail" class="detail" hidden></article>
+    </main>
+  </div>
+</div>
+</body>
+</html>
