@@ -1,18 +1,18 @@
 {
-  "_comment": "Couloirs de la frise. Un couloir regroupe plusieurs éléments Wikidata (le pays actuel et ses formes historiques). QID à vérifier/compléter sur wikidata.org. « _ » = événements sans pays.",
+  "_comment": "Couloirs de la frise. qids : éléments Wikidata regroupés (le pays actuel et ses formes historiques) ; « _ » = événements sans pays. iso3 : code utilisé par les courbes Our World in Data. tz : fuseau horaire IANA pour l'heure locale (historique compris : heures d'été de guerre, etc.).",
   "lanes": [
-    { "id": "fr", "name": "France", "qids": ["Q142"], "on": true },
-    { "id": "de", "name": "Allemagne", "qids": ["Q183", "Q7318", "Q41304", "Q43287", "Q713750", "Q16957"], "on": true },
-    { "id": "gb", "name": "Royaume-Uni", "qids": ["Q145"], "on": true },
-    { "id": "us", "name": "États-Unis", "qids": ["Q30"], "on": true },
-    { "id": "ru", "name": "Russie / URSS", "qids": ["Q159", "Q15180", "Q34266"], "on": true },
-    { "id": "jp", "name": "Japon", "qids": ["Q17", "Q188712"], "on": true },
-    { "id": "cn", "name": "Chine", "qids": ["Q148", "Q13426199"], "on": false },
-    { "id": "id", "name": "Indonésie", "qids": ["Q252", "Q188161"], "on": true },
-    { "id": "dz", "name": "Algérie", "qids": ["Q262"], "on": true },
-    { "id": "it", "name": "Italie", "qids": ["Q38", "Q172579"], "on": false },
-    { "id": "pl", "name": "Pologne", "qids": ["Q36", "Q207313"], "on": false },
-    { "id": "in", "name": "Inde", "qids": ["Q668", "Q129286"], "on": false },
-    { "id": "world", "name": "Monde (sans pays)", "qids": ["_"], "on": true }
+    { "id": "fr", "name": "France", "qids": ["Q142"], "iso3": "FRA", "tz": "Europe/Paris", "on": true },
+    { "id": "de", "name": "Allemagne", "qids": ["Q183", "Q7318", "Q41304", "Q43287", "Q713750", "Q16957"], "iso3": "DEU", "tz": "Europe/Berlin", "on": true },
+    { "id": "gb", "name": "Royaume-Uni", "qids": ["Q145"], "iso3": "GBR", "tz": "Europe/London", "on": true },
+    { "id": "us", "name": "États-Unis", "qids": ["Q30"], "iso3": "USA", "tz": "America/New_York", "tzName": "côte Est", "on": true },
+    { "id": "ru", "name": "Russie / URSS", "qids": ["Q159", "Q15180", "Q34266"], "iso3": "RUS", "tz": "Europe/Moscow", "on": true },
+    { "id": "jp", "name": "Japon", "qids": ["Q17", "Q188712"], "iso3": "JPN", "tz": "Asia/Tokyo", "on": true },
+    { "id": "cn", "name": "Chine", "qids": ["Q148", "Q13426199"], "iso3": "CHN", "tz": "Asia/Shanghai", "on": false },
+    { "id": "id", "name": "Indonésie", "qids": ["Q252", "Q188161"], "iso3": "IDN", "tz": "Asia/Jakarta", "on": true },
+    { "id": "dz", "name": "Algérie", "qids": ["Q262"], "iso3": "DZA", "tz": "Africa/Algiers", "on": true },
+    { "id": "it", "name": "Italie", "qids": ["Q38", "Q172579"], "iso3": "ITA", "tz": "Europe/Rome", "on": false },
+    { "id": "pl", "name": "Pologne", "qids": ["Q36", "Q207313"], "iso3": "POL", "tz": "Europe/Warsaw", "on": false },
+    { "id": "in", "name": "Inde", "qids": ["Q668", "Q129286"], "iso3": "IND", "tz": "Asia/Kolkata", "on": false },
+    { "id": "world", "name": "Monde (sans pays)", "qids": ["_"], "iso3": "OWID_WRL", "on": true }
   ]
 }

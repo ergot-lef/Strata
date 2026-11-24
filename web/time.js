@@ -182,3 +182,41 @@ export function overviewX(t, now = nowFyear()) {
 export function overviewT(x, now = nowFyear()) {
   return now - 10 ** (LOG_MAX - x * (LOG_MAX - LOG_MIN));
 }
+
+// --- Échelle logarithmique (âge = années avant aujourd'hui) -----------------
+
+export const LOG_MIN_AGE = DAY;
+
+export function logU(t, now = nowFyear()) {
+  return -Math.log10(Math.max(now - t, LOG_MIN_AGE));
+}
+
+export function logT(u, now = nowFyear()) {
+  return now - 10 ** -u;
+}
+
+export function formatAgeLabel(age) {
+  if (age >= 1e4) return `il y a ${formatAge(age)}`;
+  if (age >= 2) return `il y a ${new Intl.NumberFormat("fr-FR").format(Math.round(age))} ans`;
+  if (age >= 1) return "il y a 1 an";
+  if (age >= 1 / 12) return `il y a ${Math.round(age * 12)} mois`;
+  return `il y a ${Math.max(1, Math.round(age / DAY))} j`;
+}
+
+// Graduations « il y a 1, 2, 5 × 10^k ans » espacées d'au moins minPx.
+export function logTicks(t0, t1, widthPx, minPx = 80, now = nowFyear()) {
+  const u0 = logU(t0, now), u1 = logU(t1, now);
+  const x = (t) => ((logU(t, now) - u0) / (u1 - u0)) * widthPx;
+  const cands = [];
+  for (let k = 10; k >= -3; k--) for (const f of [1, 5, 2]) cands.push({ age: f * 10 ** k, rank: f === 1 ? 0 : f === 5 ? 1 : 2 });
+  const kept = [];
+  for (const rank of [0, 1, 2]) {
+    for (const c of cands.filter((c) => c.rank === rank)) {
+      const t = now - c.age;
+      if (t < t0 || t > t1) continue;
+      const px = x(t);
+      if (kept.every((k) => Math.abs(k.px - px) >= minPx)) kept.push({ t, px, label: formatAgeLabel(c.age) });
+    }
+  }
+  return kept.sort((a, b) => a.t - b.t);
+}

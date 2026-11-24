@@ -6,7 +6,7 @@
 
 API :
     GET /api/events?from=1945.0&to=1945.5&countries=Q142,Q30&per_lane=25
-                   [&themes=guerre,politique][&sub_off=sport.match][&include_other=1]
+                   [&themes=guerre,politique][&sub_off=sport.match][&include_other=1][&extra=Q1,Q2]
     GET /api/event?qid=Q...          fiche complète : résumés, liens, même jour
     GET /api/countries[?from=&to=]
     GET /api/themes
@@ -118,6 +118,11 @@ def api_events(con, q: dict) -> dict:
         ) WHERE rk <= ?
     """
     rows = con.execute(sql, params + [per_lane]).fetchall()
+    # Éléments épinglés (fiche ouverte, ses liens, le même jour) : toujours renvoyés
+    extra = [x for x in q.get("extra", "").split(",") if x][:100]
+    if extra:
+        rows += con.execute(f"""SELECT e.* FROM events e WHERE e.qid IN ({','.join('?' * len(extra))})
+                                AND e.t_lo <= ? AND e.t_hi >= ?""", extra + [t_to, t_from]).fetchall()
     qids = sorted({r["qid"] for r in rows})
     texts, ctry = _texts(con, qids), _countries_of(con, qids)
     seen, events = set(), []
