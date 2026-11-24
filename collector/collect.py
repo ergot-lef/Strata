@@ -314,7 +314,14 @@ def parse_work(ent: dict, window: tuple[float, float] | None = None) -> dict | N
     }
 
 
+HUMAN = "Q5"
+
+
 def parse_person(ent: dict, window: tuple[float, float] | None = None) -> dict | None:
+    # Seulement les êtres humains réels : Wikidata date aussi la « naissance »
+    # de personnages de fiction (Albus Dumbledore, Sherlock Holmes…).
+    if HUMAN not in _item_ids(ent, "P31", every=True):
+        return None
     birth = _pick(_times(ent, "P569"), window)
     if not birth:
         return None

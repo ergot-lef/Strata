@@ -95,6 +95,18 @@ class ParseEntityTests(unittest.TestCase):
         self.assertAlmostEqual(ev["t"], fyear(1945, 3, 1))
         self.assertAlmostEqual(ev["end"], 1946.0)
 
+    def test_people_only_real_humans(self):
+        def tv(t):
+            return {"rank": "normal", "mainsnak": {"datavalue": {"value": {"time": t, "precision": 11}}}}
+
+        def it(q):
+            return {"rank": "normal", "mainsnak": {"datavalue": {"value": {"id": q}}}}
+
+        real = {"id": "Q1", "claims": {"P31": [it("Q5")], "P569": [tv("+1882-08-06T00:00:00Z")]}}
+        fiction = {"id": "Q2", "claims": {"P31": [it("Q15632617")], "P569": [tv("+1881-07-01T00:00:00Z")]}}
+        self.assertIsNotNone(collect.parse_person(real))
+        self.assertIsNone(collect.parse_person(fiction))
+
     def test_xsd_bounds(self):
         from strata.timeutil import to_xsd
         self.assertEqual(to_xsd(fyear(1945, 5, 8, 15)), "1945-05-08T15:00:00Z")

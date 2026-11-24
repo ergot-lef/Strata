@@ -184,13 +184,14 @@ PERSON_DOMAINS = [
     ("culture", "Arts, lettres", ["writer", "novelist", "poet", "painter", "sculptor", "composer", "musician",
                                   "singer", "actor", "actress", "film director", "architect", "photographer",
                                   "playwright", "philosopher", "journalist", "screenwriter", "dancer", "artist",
-                                  "historian", "comedian", "illustrator"]),
+                                  "historian", "comedian", "illustrator", "designer", "fashion designer",
+                                  "conductor", "pianist", "violinist", "film producer", "cartoonist", "television presenter"]),
     ("sport", "Sport", ["athlete", "footballer", "association football player", "cyclist", "tennis player",
                         "boxer", "racing driver", "swimmer", "basketball player", "chess player", "player"]),
     ("religion", "Religion", ["priest", "theologian", "bishop", "pope", "rabbi", "imam", "missionary", "monk",
                               "nun", "saint", "religious leader", "cardinal"]),
-    ("economie", "Économie, entreprise", ["businessperson", "entrepreneur", "banker", "industrialist",
-                                          "merchant", "investor"]),
+    ("economie", "Économie, entreprise", ["businessperson", "businessman", "businesswoman", "entrepreneur", "banker",
+                                          "industrialist", "merchant", "investor", "executive"]),
 ]
 _PERSON_PATTERNS = [(d, _rx(words)) for d, _, words in PERSON_DOMAINS]
 
