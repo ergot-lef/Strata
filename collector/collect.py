@@ -7,6 +7,13 @@ Exemples :
     python collector/collect.py series population https://ourworldindata.org/grapher/population.csv
     python collector/collect.py stats
 
+Méthode, en deux temps pour ménager le service public de Wikidata :
+  1. une requête SPARQL légère liste les éléments datés d'une période
+     (P585 « date » ou P580 « début »), via l'index des dates ;
+  2. les détails (dates précises, types, pays, titres FR/EN/DE) viennent
+     de l'API classique de Wikidata (wbgetentities), par paquets de 50.
+Si le service SPARQL sature, la période est redécoupée (année → mois → jours).
+
 Aucune dépendance : bibliothèque standard Python uniquement.
 """
 
@@ -27,56 +34,63 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from strata import __version__  # noqa: E402
 from strata.db import DEFAULT_DB, connect  # noqa: E402
 from strata.themes import classify  # noqa: E402
-from strata.timeutil import parse_wikidata_time, span_for  # noqa: E402
+from strata.timeutil import fyear, parse_wikidata_time, span_for, to_xsd  # noqa: E402
 
 SPARQL_URL = "https://query.wikidata.org/sparql"
 API_URL = "https://www.wikidata.org/w/api.php"
 USER_AGENT = f"Strata/{__version__} (https://github.com/ergot-lef/strata; frise chronologique personnelle)"
 LANGS = ["fr", "en", "de"]
 
-# Un événement = un élément Wikidata qui a une date ponctuelle (P585)
-# ou une date de début (P580), et qui existe dans au moins N Wikipédias.
-EVENTS_QUERY = """
-SELECT ?e ?time ?prec ?end ?sl ?type ?country WHERE {{
-  {{
-    ?e p:P585/psv:P585 ?tv .
-  }} UNION {{
-    ?e p:P580/psv:P580 ?tv .
-    OPTIONAL {{ ?e wdt:P582 ?end . }}
-  }}
-  ?tv wikibase:timeValue ?time ; wikibase:timePrecision ?prec .
-  FILTER(?time >= "{start}"^^xsd:dateTime && ?time < "{stop}"^^xsd:dateTime)
+# Étape 1 : seulement la liste des éléments. « rangeSafe » permet au serveur
+# d'utiliser son index de dates au lieu de parcourir toutes les valeurs.
+LIST_QUERY = """
+SELECT DISTINCT ?e WHERE {{
+  {{ ?e wdt:P585 ?d . hint:Prior hint:rangeSafe true . }}
+  UNION
+  {{ ?e wdt:P580 ?d . hint:Prior hint:rangeSafe true . }}
+  FILTER(?d >= "{start}"^^xsd:dateTime && ?d < "{stop}"^^xsd:dateTime)
   ?e wikibase:sitelinks ?sl .
   FILTER(?sl >= {min_sl})
-  ?e wdt:P31 ?type .
-  OPTIONAL {{
-    {{ ?e wdt:P17 ?country . }} UNION {{ ?e wdt:P276/wdt:P17 ?country . }}
-  }}
 }}
 """
+
+
+class Overloaded(Exception):
+    """Le serveur SPARQL n'a pas pu répondre à temps : découper plus fin."""
 
 
 def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def http_get(url: str, params: dict, accept: str = "application/json", tries: int = 5) -> bytes:
-    full = url + "?" + urllib.parse.urlencode(params)
+def http_get(url: str, params: dict, accept: str = "application/json", tries: int = 6,
+             timeout: int = 70) -> bytes:
+    full = url + ("?" + urllib.parse.urlencode(params) if params else "")
     for attempt in range(1, tries + 1):
         req = urllib.request.Request(full, headers={"User-Agent": USER_AGENT, "Accept": accept})
         try:
-            with urllib.request.urlopen(req, timeout=90) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503, 504) and attempt < tries:
-                wait = int(e.headers.get("Retry-After") or 0) or 5 * attempt
-                log(f"  HTTP {e.code}, nouvel essai dans {wait} s…")
-                time.sleep(wait)
+            if e.code == 429 and attempt < tries:
+                # Limitation de débit : on attend ce que le serveur demande.
+                wait = int(e.headers.get("Retry-After") or 60)
+                log(f"  serveur limité (429), attente {wait} s…")
+                time.sleep(wait + 1)
+                continue
+            if e.code in (500, 502, 503, 504) and url == SPARQL_URL:
+                raise Overloaded(f"HTTP {e.code}") from e
+            if e.code in (500, 502, 503, 504) and attempt < tries:
+                log(f"  HTTP {e.code}, nouvel essai dans {5 * attempt} s…")
+                time.sleep(5 * attempt)
                 continue
             raise
-        except (urllib.error.URLError, TimeoutError) as e:
+        except (TimeoutError, urllib.error.URLError) as e:
+            reason = getattr(e, "reason", e)
+            if url == SPARQL_URL and isinstance(reason, TimeoutError | OSError) and "timed out" in str(reason):
+                raise Overloaded("délai dépassé") from e
             if attempt < tries:
-                log(f"  réseau : {e}, nouvel essai…")
+                log(f"  réseau : {reason}, nouvel essai…")
                 time.sleep(5 * attempt)
                 continue
             raise
@@ -88,87 +102,136 @@ def year_bound(year: int) -> str:
     return f"{sign}{abs(year):04d}-01-01T00:00:00Z"
 
 
-def sparql(query: str) -> list[dict]:
-    raw = http_get(SPARQL_URL, {"query": query, "format": "json"}, "application/sparql-results+json")
-    return json.loads(raw)["results"]["bindings"]
+def list_qids(t_a: float, t_b: float, min_sl: int, depth: int = 0) -> list[str]:
+    """QID des éléments datés dans [t_a, t_b[, en redécoupant si le serveur sature."""
+    start, stop = to_xsd(t_a), to_xsd(t_b)
+    query = LIST_QUERY.format(start=start, stop=stop, min_sl=min_sl)
+    try:
+        raw = http_get(SPARQL_URL, {"query": query, "format": "json"}, "application/sparql-results+json")
+        rows = json.loads(raw)["results"]["bindings"]
+        return [r["e"]["value"].rsplit("/", 1)[-1] for r in rows]
+    except Overloaded as e:
+        if t_b - t_a < 2 / 365:
+            raise RuntimeError(f"{start[:10]} : le serveur sature même sur un jour ({e})") from e
+        log(f"{'  ' * depth}  {start[:10]} → {stop[:10]} : trop lourd ({e}), découpage en deux…")
+        time.sleep(3)
+        mid = (t_a + t_b) / 2
+        return list_qids(t_a, mid, min_sl, depth + 1) + list_qids(mid, t_b, min_sl, depth + 1)
 
 
-def qid_of(uri: str) -> str:
-    return uri.rsplit("/", 1)[-1]
-
-
-def parse_rows(rows: list[dict]) -> dict[str, dict]:
-    """Regroupe les lignes SPARQL (une par type × pays) par événement."""
-    events: dict[str, dict] = {}
-    for row in rows:
-        qid = qid_of(row["e"]["value"])
-        t = parse_wikidata_time(row["time"]["value"])
-        if t is None:
-            continue
-        ev = events.setdefault(qid, {
-            "qid": qid, "t": t, "prec": int(row["prec"]["value"]),
-            "raw": row["time"]["value"], "end": None, "end_raw": None,
-            "sl": int(row["sl"]["value"]), "types": set(), "countries": set(),
-        })
-        # Plusieurs dates possibles : on garde la plus précise, puis la plus ancienne.
-        prec = int(row["prec"]["value"])
-        if prec > ev["prec"] or (prec == ev["prec"] and t < ev["t"]):
-            ev.update(t=t, prec=prec, raw=row["time"]["value"])
-        if "end" in row:
-            te = parse_wikidata_time(row["end"]["value"])
-            if te is not None and (ev["end"] is None or te > ev["end"]):
-                ev["end"], ev["end_raw"] = te, row["end"]["value"]
-        if "type" in row:
-            ev["types"].add(qid_of(row["type"]["value"]))
-        if "country" in row:
-            ev["countries"].add(qid_of(row["country"]["value"]))
-    return events
-
-
-def fetch_entities(qids: list[str]) -> dict[str, dict]:
-    """Libellés, descriptions et articles Wikipédia FR/EN/DE (API wbgetentities)."""
+def fetch_entities(qids: list[str], props: str = "labels|descriptions|sitelinks|claims") -> dict[str, dict]:
+    """Éléments complets via l'API wbgetentities (pas le service SPARQL)."""
     out: dict[str, dict] = {}
     for i in range(0, len(qids), 50):
         batch = qids[i:i + 50]
         raw = http_get(API_URL, {
             "action": "wbgetentities", "ids": "|".join(batch), "format": "json",
-            "props": "labels|descriptions|sitelinks", "languages": "|".join(LANGS),
-            "sitefilter": "|".join(f"{l}wiki" for l in LANGS),
+            "props": props, "languages": "|".join(LANGS), "maxlag": 5,
         })
         out.update(json.loads(raw).get("entities", {}))
-        time.sleep(0.3)
+        time.sleep(0.2)
     return out
 
 
-def store_entities_labels(con, entities: dict[str, dict]) -> None:
-    for qid, ent in entities.items():
-        for lang in LANGS:
-            label = ent.get("labels", {}).get(lang, {}).get("value")
-            if label:
-                con.execute("INSERT OR REPLACE INTO entity_label VALUES (?,?,?)", (qid, lang, label))
+# --- Lecture des déclarations Wikidata ------------------------------------
+
+def _statements(ent: dict, prop: str) -> list[dict]:
+    """Déclarations d'une propriété : rang « préféré » d'abord, « déprécié » écarté."""
+    sts = [s for s in ent.get("claims", {}).get(prop, []) if s.get("rank") != "deprecated"]
+    preferred = [s for s in sts if s.get("rank") == "preferred"]
+    return preferred or sts
 
 
-def known_labels(con, qids: set[str]) -> set[str]:
+def _item_ids(ent: dict, prop: str) -> list[str]:
+    out = []
+    for s in _statements(ent, prop):
+        v = s.get("mainsnak", {}).get("datavalue", {}).get("value")
+        if isinstance(v, dict) and "id" in v:
+            out.append(v["id"])
+    return out
+
+
+def _times(ent: dict, prop: str) -> list[tuple[float, int, str]]:
+    out = []
+    for s in _statements(ent, prop):
+        v = s.get("mainsnak", {}).get("datavalue", {}).get("value")
+        if not isinstance(v, dict) or "time" not in v:
+            continue
+        t = parse_wikidata_time(v["time"], api=True)
+        if t is not None:
+            out.append((t, int(v.get("precision", 11)), v["time"]))
+    return out
+
+
+def parse_entity(ent: dict) -> dict | None:
+    """Élément de l'API -> événement Strata (ou None s'il n'a pas de date)."""
+    point, start, end = _times(ent, "P585"), _times(ent, "P580"), _times(ent, "P582")
+    dates = point or start
+    if not dates:
+        return None
+    # La date la plus précise, puis la plus ancienne.
+    t, prec, raw = sorted(dates, key=lambda d: (-d[1], d[0]))[0]
+    t_end = end_raw = None
+    if not point and end:
+        t_end, _, end_raw = max(end, key=lambda d: d[0])
+    return {
+        "qid": ent["id"], "t": t, "prec": prec, "raw": raw, "end": t_end, "end_raw": end_raw,
+        "sl": len(ent.get("sitelinks", {})),
+        "types": _item_ids(ent, "P31"), "countries": _item_ids(ent, "P17"), "places": _item_ids(ent, "P276"),
+        "labels": {l: ent.get("labels", {}).get(l, {}).get("value") for l in LANGS},
+        "descr": {l: ent.get("descriptions", {}).get(l, {}).get("value") for l in LANGS},
+        "articles": {l: ent.get("sitelinks", {}).get(f"{l}wiki", {}).get("title") for l in LANGS},
+    }
+
+
+# --- Enregistrement -----------------------------------------------------------
+
+def _cached(con, table: str, qids: set[str]) -> set[str]:
     if not qids:
         return set()
     marks = ",".join("?" * len(qids))
-    return {r[0] for r in con.execute(f"SELECT DISTINCT qid FROM entity_label WHERE qid IN ({marks})", list(qids))}
+    return {r[0] for r in con.execute(f"SELECT DISTINCT qid FROM {table} WHERE qid IN ({marks})", list(qids))}
 
 
-def save_chunk(con, events: dict[str, dict]) -> int:
+def resolve_places(con, places: set[str]) -> dict[str, list[str]]:
+    """Pays (P17) des lieux (P276), avec cache dans place_country."""
+    missing = sorted(places - _cached(con, "place_country", places))
+    if missing:
+        for qid, ent in fetch_entities(missing, "claims").items():
+            cs = _item_ids(ent, "P17") or ["-"]
+            con.executemany("INSERT OR IGNORE INTO place_country VALUES (?,?)", [(qid, c) for c in cs])
+    out: dict[str, list[str]] = {}
+    if places:
+        marks = ",".join("?" * len(places))
+        for r in con.execute(f"SELECT qid, country FROM place_country WHERE qid IN ({marks})", list(places)):
+            if r[1] != "-":
+                out.setdefault(r[0], []).append(r[1])
+    return out
+
+
+def save_events(con, events: list[dict]) -> int:
     if not events:
         return 0
-    # Libellés des types et des pays (en cache dans entity_label)
-    aux = set().union(*(e["types"] | e["countries"] for e in events.values()))
-    missing = sorted(aux - known_labels(con, aux))
+    # Libellés des types et des pays (cache entity_label)
+    aux = {q for e in events for q in e["types"] + e["countries"]}
+    place_map = resolve_places(con, {p for e in events if not e["countries"] for p in e["places"]})
+    for e in events:
+        if not e["countries"]:
+            e["countries"] = sorted({c for p in e["places"] for c in place_map.get(p, [])})
+            aux.update(e["countries"])
+    missing = sorted(aux - _cached(con, "entity_label", aux))
     if missing:
-        store_entities_labels(con, fetch_entities(missing))
+        for qid, ent in fetch_entities(missing, "labels").items():
+            for lang in LANGS:
+                label = ent.get("labels", {}).get(lang, {}).get("value")
+                if label:
+                    con.execute("INSERT OR REPLACE INTO entity_label VALUES (?,?,?)", (qid, lang, label))
 
-    texts = fetch_entities(sorted(events))
-    for qid, ev in events.items():
+    for ev in events:
+        qid = ev["qid"]
         type_labels = [r[0] for r in con.execute(
             "SELECT label FROM entity_label WHERE lang='en' AND qid IN (%s)" % ",".join("?" * len(ev["types"])),
-            list(ev["types"]))] if ev["types"] else []
+            ev["types"])] if ev["types"] else []
         is_span = 1 if ev["end"] is not None and ev["end"] > ev["t"] else 0
         t_hi = ev["end"] if is_span else ev["t"] + span_for(ev["prec"])
         con.execute(
@@ -179,15 +242,20 @@ def save_chunk(con, events: dict[str, dict]) -> int:
         con.executemany("INSERT OR IGNORE INTO event_country VALUES (?,?)", [(qid, c) for c in ev["countries"]])
         con.execute("DELETE FROM event_type WHERE qid=?", (qid,))
         con.executemany("INSERT OR IGNORE INTO event_type VALUES (?,?)", [(qid, t) for t in ev["types"]])
-        ent = texts.get(qid, {})
         for lang in LANGS:
-            label = ent.get("labels", {}).get(lang, {}).get("value")
-            descr = ent.get("descriptions", {}).get(lang, {}).get("value")
-            article = ent.get("sitelinks", {}).get(f"{lang}wiki", {}).get("title")
+            label, descr, article = ev["labels"].get(lang), ev["descr"].get(lang), ev["articles"].get(lang)
             if label or article:
                 con.execute("INSERT OR REPLACE INTO event_text VALUES (?,?,?,?,?)", (qid, lang, label, descr, article))
     con.commit()
     return len(events)
+
+
+def collect_period(con, t_a: float, t_b: float, min_sl: int) -> int:
+    qids = list_qids(t_a, t_b, min_sl)
+    if not qids:
+        return 0
+    events = [ev for ent in fetch_entities(qids).values() if (ev := parse_entity(ent))]
+    return save_events(con, events)
 
 
 def cmd_events(args) -> None:
@@ -198,20 +266,20 @@ def cmd_events(args) -> None:
         if not args.force and con.execute("SELECT 1 FROM collected WHERE chunk=?", (chunk,)).fetchone():
             log(f"{year} : déjà collecté (--force pour refaire)")
             continue
-        query = EVENTS_QUERY.format(start=year_bound(year), stop=year_bound(year + 1), min_sl=args.min_sitelinks)
         try:
-            rows = sparql(query)
-        except Exception as e:  # noqa: BLE001 — on continue l'année suivante
-            log(f"{year} : échec ({e})")
+            n = collect_period(con, fyear(year), fyear(year + 1), args.min_sitelinks)
+        except Exception as e:  # noqa: BLE001 — on passe à l'année suivante
+            log(f"{year} : échec ({e}). Relance plus tard : les années réussies sont gardées.")
             continue
-        n = save_chunk(con, parse_rows(rows))
         con.execute("INSERT OR REPLACE INTO collected VALUES (?,?)", (chunk, datetime.now(timezone.utc).isoformat()))
         con.commit()
         total += n
         log(f"{year} : {n} événements")
-        time.sleep(1.0)  # politesse envers le service public de Wikidata
+        time.sleep(2)  # politesse envers le service public de Wikidata
     log(f"Terminé : {total} événements ajoutés ou mis à jour.")
 
+
+# --- Courbes de fond ------------------------------------------------------------
 
 def read_series_csv(text: str, entity: str) -> list[tuple[float, float]]:
     """CSV « grapher » d'Our World in Data : Entity, Code, Year, <valeur>."""

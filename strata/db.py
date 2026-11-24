@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS entity_label (
     PRIMARY KEY (qid, lang)
 );
 
+-- Pays des lieux (P276 -> P17), pour situer un événement sans pays
+CREATE TABLE IF NOT EXISTS place_country (
+    qid     TEXT NOT NULL,
+    country TEXT NOT NULL,      -- « - » = lieu sans pays connu
+    PRIMARY KEY (qid, country)
+);
+
 -- Courbes de fond (population, énergie...)
 CREATE TABLE IF NOT EXISTS series (
     name   TEXT NOT NULL,
