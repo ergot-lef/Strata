@@ -83,6 +83,16 @@ class ParseEntityTests(unittest.TestCase):
         self.assertAlmostEqual(ev["end"], -449.0)
         self.assertIsNone(collect.parse_entity({"id": "Q3", "claims": {}}))
 
+    def test_window_picks_matching_date(self):
+        def tv(t, p):
+            return {"rank": "normal", "mainsnak": {"datavalue": {"value": {"time": t, "precision": p}}}}
+
+        ent = {"id": "Q4", "claims": {"P580": [tv("+1898-00-00T00:00:00Z", 9), tv("+1945-03-01T00:00:00Z", 11)],
+                                      "P582": [tv("+1900-00-00T00:00:00Z", 9), tv("+1946-00-00T00:00:00Z", 9)]}}
+        ev = collect.parse_entity(ent, (1945.0, 1946.0))
+        self.assertAlmostEqual(ev["t"], fyear(1945, 3, 1))
+        self.assertAlmostEqual(ev["end"], 1946.0)
+
     def test_xsd_bounds(self):
         from strata.timeutil import to_xsd
         self.assertEqual(to_xsd(fyear(1945, 5, 8, 15)), "1945-05-08T15:00:00Z")

@@ -163,9 +163,19 @@ def _times(ent: dict, prop: str) -> list[tuple[float, int, str]]:
     return out
 
 
-def parse_entity(ent: dict) -> dict | None:
-    """Élément de l'API -> événement Strata (ou None s'il n'a pas de date)."""
+def parse_entity(ent: dict, window: tuple[float, float] | None = None) -> dict | None:
+    """Élément de l'API -> événement Strata (ou None s'il n'a pas de date).
+
+    window : période collectée. Quand l'élément a plusieurs dates, on garde
+    celle qui tombe dans cette période (c'est elle qui l'a fait sortir).
+    """
     point, start, end = _times(ent, "P585"), _times(ent, "P580"), _times(ent, "P582")
+    if window:
+        a, b = window
+        in_p = [d for d in point if a <= d[0] < b]
+        in_s = [d for d in start if a <= d[0] < b]
+        if in_p or in_s:
+            point, start = in_p, in_s
     dates = point or start
     if not dates:
         return None
@@ -173,7 +183,8 @@ def parse_entity(ent: dict) -> dict | None:
     t, prec, raw = sorted(dates, key=lambda d: (-d[1], d[0]))[0]
     t_end = end_raw = None
     if not point and end:
-        t_end, _, end_raw = max(end, key=lambda d: d[0])
+        after = [d for d in end if d[0] >= t] or end
+        t_end, _, end_raw = min(after, key=lambda d: d[0])
     return {
         "qid": ent["id"], "t": t, "prec": prec, "raw": raw, "end": t_end, "end_raw": end_raw,
         "sl": len(ent.get("sitelinks", {})),
@@ -254,7 +265,7 @@ def collect_period(con, t_a: float, t_b: float, min_sl: int) -> int:
     qids = list_qids(t_a, t_b, min_sl)
     if not qids:
         return 0
-    events = [ev for ent in fetch_entities(qids).values() if (ev := parse_entity(ent))]
+    events = [ev for ent in fetch_entities(qids).values() if (ev := parse_entity(ent, (t_a, t_b)))]
     return save_events(con, events)
 
 
