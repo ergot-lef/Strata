@@ -4,6 +4,9 @@
 Exemples :
     python collector/collect.py events --from 1939 --to 1946
     python collector/collect.py events --from 1800 --to 2026 --min-sitelinks 10
+    python collector/collect.py culture --from 1900 --to 1950   # découvertes, inventions, œuvres
+    python collector/collect.py people --from 1850 --to 1950    # personnes nées dans la période
+    python collector/collect.py rulers                # chefs d'État et de gouvernement
     python collector/collect.py update                # relit les événements déjà en base (liens, thèmes, résumés)
     python collector/collect.py summaries             # résumés Wikipédia manquants
     python collector/collect.py series tout           # toutes les courbes prêtes à l'emploi
@@ -37,8 +40,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from strata import __version__  # noqa: E402
-from strata.db import DEFAULT_DB, WORLD, connect  # noqa: E402
-from strata.themes import classify_full  # noqa: E402
+from strata.db import DEFAULT_DB, ROOT, WORLD, connect  # noqa: E402
+from strata.themes import classify_full, classify_person, classify_work  # noqa: E402
 from strata.timeutil import fyear, parse_wikidata_time, span_for, to_xsd  # noqa: E402
 
 SPARQL_URL = "https://query.wikidata.org/sparql"
@@ -58,26 +61,44 @@ MAX_LINKS_PER_PROP = 30
 OWID = "https://ourworldindata.org/grapher/{}.csv?csvType=full&useColumnShortNames=true"
 SERIES_PRESETS = {
     "population": ("population", "Population", "hab."),
+    "esperance": ("life-expectancy", "Espérance de vie à la naissance", "ans"),
+    "mortalite": ("child-mortality", "Mortalité des enfants de moins de 5 ans", "%"),
+    "pib": ("gdp-per-capita-maddison", "PIB par habitant", "$ (2011)"),
+    "pauvrete": ("share-of-population-in-extreme-poverty", "Population en extrême pauvreté", "%"),
+    "urbanisation": ("urbanization-last-500-years", "Population urbaine", "%"),
+    "alphabetisation": ("cross-country-literacy-rates", "Alphabétisation", "%"),
+    "democratie": ("electoral-democracy-index", "Indice de démocratie électorale (V-Dem)", "0 à 1"),
+    "depenses": ("historical-gov-spending-gdp", "Dépenses publiques", "% du PIB"),
+    "dette": ("gross-public-sector-debt-as-a-proportion-of-gdp", "Dette publique (administration centrale)", "% du PIB"),
+    "militaire": ("military-expenditure-share-gdp", "Dépenses militaires", "% du PIB"),
     "energie": ("primary-energy-cons", "Énergie primaire consommée", "TWh"),
     "petrole": ("oil-proved-reserves", "Réserves prouvées de pétrole", "m³"),
-    "dette": ("gross-public-sector-debt-as-a-proportion-of-gdp", "Dette publique (administration centrale)", "% du PIB"),
-    "depenses": ("historical-gov-spending-gdp", "Dépenses publiques", "% du PIB"),
-    "pib": ("gdp-per-capita-maddison", "PIB par habitant", "$ (2011)"),
-    "esperance": ("life-expectancy", "Espérance de vie à la naissance", "ans"),
+    "prix_petrole": ("crude-oil-prices", "Prix du pétrole brut", "$ courants / m³"),
+    "emissions": ("annual-co2-emissions-per-country", "Émissions de CO₂", "t"),
+    "co2": ("co2-long-term-concentration", "CO₂ dans l'atmosphère (carottes de glace)", "ppm"),
+    "temperature": ("temperature-anomaly", "Écart de température mondiale (vs 1861-1890)", "°C"),
 }
 
 # Étape 1 : seulement la liste des éléments. « rangeSafe » permet au serveur
 # d'utiliser son index de dates au lieu de parcourir toutes les valeurs.
-LIST_QUERY = """
+def list_query(props: tuple[str, ...], start: str, stop: str, min_sl: int) -> str:
+    union = "\n  UNION\n  ".join(f"{{ ?e wdt:{p} ?d . hint:Prior hint:rangeSafe true . }}" for p in props)
+    return f"""
 SELECT DISTINCT ?e WHERE {{
-  {{ ?e wdt:P585 ?d . hint:Prior hint:rangeSafe true . }}
-  UNION
-  {{ ?e wdt:P580 ?d . hint:Prior hint:rangeSafe true . }}
+  {union}
   FILTER(?d >= "{start}"^^xsd:dateTime && ?d < "{stop}"^^xsd:dateTime)
   ?e wikibase:sitelinks ?sl .
   FILTER(?sl >= {min_sl})
 }}
 """
+
+
+EVENT_PROPS = ("P585", "P580")        # date ; début
+CULTURE_PROPS = ("P575", "P577")      # découverte/invention ; publication
+PERSON_PROPS = ("P569",)              # naissance
+# Sites Wikimedia qui ne sont pas des Wikipédias de langue
+NOT_LANG_WIKIS = {"commonswiki", "specieswiki", "metawiki", "wikidatawiki", "mediawikiwiki", "sourceswiki",
+                  "outreachwiki", "wikimaniawiki", "foundationwiki", "incubatorwiki", "wikifunctionswiki"}
 
 
 class Overloaded(Exception):
@@ -142,10 +163,10 @@ def year_bound(year: int) -> str:
     return f"{sign}{abs(year):04d}-01-01T00:00:00Z"
 
 
-def list_qids(t_a: float, t_b: float, min_sl: int, depth: int = 0) -> list[str]:
+def list_qids(t_a: float, t_b: float, min_sl: int, depth: int = 0, props: tuple[str, ...] = EVENT_PROPS) -> list[str]:
     """QID des éléments datés dans [t_a, t_b[, en redécoupant si le serveur sature."""
     start, stop = to_xsd(t_a), to_xsd(t_b)
-    query = LIST_QUERY.format(start=start, stop=stop, min_sl=min_sl)
+    query = list_query(props, start, stop, min_sl)
     try:
         raw = http_get(SPARQL_URL, {"query": query, "format": "json"}, "application/sparql-results+json")
         rows = json.loads(raw)["results"]["bindings"]
@@ -156,7 +177,7 @@ def list_qids(t_a: float, t_b: float, min_sl: int, depth: int = 0) -> list[str]:
         log(f"{'  ' * depth}  {start[:10]} → {stop[:10]} : trop lourd ({e}), découpage en deux…")
         time.sleep(3)
         mid = (t_a + t_b) / 2
-        return list_qids(t_a, mid, min_sl, depth + 1) + list_qids(mid, t_b, min_sl, depth + 1)
+        return list_qids(t_a, mid, min_sl, depth + 1, props) + list_qids(mid, t_b, min_sl, depth + 1, props)
 
 
 def fetch_entities(qids: list[str], props: str = "labels|descriptions|sitelinks|claims") -> dict[str, dict]:
@@ -213,12 +234,33 @@ def _times(ent: dict, prop: str) -> list[tuple[float, int, str]]:
     return out
 
 
-def parse_entity(ent: dict, window: tuple[float, float] | None = None) -> dict | None:
+def wikis_of(ent: dict) -> dict[str, str]:
+    """{langue: titre} de toutes les Wikipédias où l'élément a un article."""
+    out = {}
+    for key, v in ent.get("sitelinks", {}).items():
+        if key.endswith("wiki") and key not in NOT_LANG_WIKIS and isinstance(v, dict) and v.get("title"):
+            out[key[:-4].replace("_", "-")] = v["title"]
+    return out
+
+
+def _base(ent: dict) -> dict:
+    return {
+        "qid": ent["id"], "sl": len(ent.get("sitelinks", {})), "wikis": wikis_of(ent),
+        "labels": {l: ent.get("labels", {}).get(l, {}).get("value") for l in LANGS},
+        "descr": {l: ent.get("descriptions", {}).get(l, {}).get("value") for l in LANGS},
+        "articles": {l: ent.get("sitelinks", {}).get(f"{l}wiki", {}).get("title") for l in LANGS},
+    }
+
+
+def parse_entity(ent: dict, window: tuple[float, float] | None = None, mode: str = "event") -> dict | None:
     """Élément de l'API -> événement Strata (ou None s'il n'a pas de date).
 
     window : période collectée. Quand l'élément a plusieurs dates, on garde
     celle qui tombe dans cette période (c'est elle qui l'a fait sortir).
+    mode « culture » : date de découverte (P575) ou de publication (P577).
     """
+    if mode == "culture":
+        return parse_work(ent, window)
     point, start, end = _times(ent, "P585"), _times(ent, "P580"), _times(ent, "P582")
     if window:
         a, b = window
@@ -235,17 +277,51 @@ def parse_entity(ent: dict, window: tuple[float, float] | None = None) -> dict |
     if not point and end:
         after = [d for d in end if d[0] >= t] or end
         t_end, _, end_raw = min(after, key=lambda d: d[0])
+    return {
+        **_base(ent), "kind": "event", "t": t, "prec": prec, "raw": raw, "end": t_end, "end_raw": end_raw,
+        "types": _item_ids(ent, "P31"), "countries": _item_ids(ent, "P17"), "places": _item_ids(ent, "P276"),
+        "links": _links(ent),
+    }
+
+
+def _links(ent: dict) -> list[tuple[str, str]]:
     links = []
     for prop in LINK_PROPS:
         links += [(prop, q) for q in _item_ids(ent, prop, every=True)[:MAX_LINKS_PER_PROP] if q != ent["id"]]
+    return links
+
+
+def _pick(dates, window):
+    if window:
+        inside = [d for d in dates if window[0] <= d[0] < window[1]]
+        dates = inside or dates
+    return sorted(dates, key=lambda d: (-d[1], d[0]))[0] if dates else None
+
+
+def parse_work(ent: dict, window: tuple[float, float] | None = None) -> dict | None:
+    """Découverte / invention (P575) ou œuvre publiée (P577)."""
+    disc = _pick(_times(ent, "P575"), window)
+    pub = None if disc else _pick(sorted(_times(ent, "P577"), key=lambda d: d[0])[:1] or [], window)
+    found = disc or pub
+    if not found:
+        return None
+    t, prec, raw = found
     return {
-        "qid": ent["id"], "t": t, "prec": prec, "raw": raw, "end": t_end, "end_raw": end_raw,
-        "sl": len(ent.get("sitelinks", {})),
-        "types": _item_ids(ent, "P31"), "countries": _item_ids(ent, "P17"), "places": _item_ids(ent, "P276"),
-        "links": links,
-        "labels": {l: ent.get("labels", {}).get(l, {}).get("value") for l in LANGS},
-        "descr": {l: ent.get("descriptions", {}).get(l, {}).get("value") for l in LANGS},
-        "articles": {l: ent.get("sitelinks", {}).get(f"{l}wiki", {}).get("title") for l in LANGS},
+        **_base(ent), "kind": "discovery" if disc else "work", "t": t, "prec": prec, "raw": raw,
+        "end": None, "end_raw": None, "types": _item_ids(ent, "P31"),
+        "countries": _item_ids(ent, "P17") or _item_ids(ent, "P495"), "places": _item_ids(ent, "P276"),
+        "links": _links(ent),
+    }
+
+
+def parse_person(ent: dict, window: tuple[float, float] | None = None) -> dict | None:
+    birth = _pick(_times(ent, "P569"), window)
+    if not birth:
+        return None
+    death = _pick(_times(ent, "P570"), None)
+    return {
+        **_base(ent), "birth": birth, "death": death,
+        "countries": _item_ids(ent, "P27"), "occupations": _item_ids(ent, "P106", every=True)[:5],
     }
 
 
@@ -297,6 +373,25 @@ def store_labels(con, qids: set[str], countries: set[str]) -> None:
             con.execute("INSERT OR REPLACE INTO country_info VALUES (?,?)", (qid, _string(ent, "P298")))
 
 
+def save_texts(con, ev: dict) -> None:
+    """Titres, descriptions, articles FR/EN/DE (event_text) et toutes les Wikipédias (wiki_page)."""
+    qid = ev["qid"]
+    for lang in LANGS:
+        label, descr, article = ev["labels"].get(lang), ev["descr"].get(lang), ev["articles"].get(lang)
+        if label or article:
+            old = con.execute("SELECT article, summary FROM event_text WHERE qid=? AND lang=?", (qid, lang)).fetchone()
+            summary = old["summary"] if old and old["article"] == article else None
+            con.execute("INSERT OR REPLACE INTO event_text (qid, lang, label, descr, article, summary) VALUES (?,?,?,?,?,?)",
+                        (qid, lang, label, descr, article, summary))
+    old = {r["lang"]: r for r in con.execute("SELECT lang, title, summary, length FROM wiki_page WHERE qid=?", (qid,))}
+    con.execute("DELETE FROM wiki_page WHERE qid=?", (qid,))
+    for lang, title in ev.get("wikis", {}).items():
+        o = old.get(lang)
+        keep = o is not None and o["title"] == title
+        con.execute("INSERT INTO wiki_page VALUES (?,?,?,?,?)",
+                    (qid, lang, title, o["summary"] if keep else None, o["length"] if keep else None))
+
+
 def save_events(con, events: list[dict]) -> int:
     if not events:
         return 0
@@ -313,28 +408,28 @@ def save_events(con, events: list[dict]) -> int:
         type_labels = [r[0] for r in con.execute(
             "SELECT label FROM entity_label WHERE lang='en' AND qid IN (%s)" % ",".join("?" * len(ev["types"])),
             ev["types"])] if ev["types"] else []
-        theme, sub, is_event = classify_full(type_labels)
+        if ev.get("kind") == "work":
+            (theme, sub), is_event, kind = classify_work(type_labels), 1, "work"
+        elif ev.get("kind") == "discovery":
+            theme, sub, is_event, kind = "science", "decouverte", 1, "discovery"
+        else:
+            theme, sub, is_event = classify_full(type_labels)
+            kind = "event" if is_event else "other"
         is_span = 1 if ev["end"] is not None and ev["end"] > ev["t"] else 0
         t_hi = ev["end"] if is_span else ev["t"] + span_for(ev["prec"])
         con.execute(
             """INSERT OR REPLACE INTO events
-               (qid, t_lo, t_hi, precision, is_span, date_raw, end_raw, sitelinks, theme, subtheme, is_event)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (qid, ev["t"], t_hi, ev["prec"], is_span, ev["raw"], ev["end_raw"], ev["sl"], theme, sub, is_event),
+               (qid, t_lo, t_hi, precision, is_span, date_raw, end_raw, sitelinks, theme, subtheme, is_event, kind)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (qid, ev["t"], t_hi, ev["prec"], is_span, ev["raw"], ev["end_raw"], ev["sl"], theme, sub, is_event, kind),
         )
+        save_texts(con, ev)
         con.execute("DELETE FROM event_country WHERE qid=?", (qid,))
         con.executemany("INSERT OR IGNORE INTO event_country VALUES (?,?)", [(qid, c) for c in ev["countries"]])
         con.execute("DELETE FROM event_type WHERE qid=?", (qid,))
         con.executemany("INSERT OR IGNORE INTO event_type VALUES (?,?)", [(qid, t) for t in ev["types"]])
         con.execute("DELETE FROM event_link WHERE qid=?", (qid,))
         con.executemany("INSERT OR IGNORE INTO event_link VALUES (?,?,?)", [(qid, p, q) for p, q in ev["links"]])
-        for lang in LANGS:
-            label, descr, article = ev["labels"].get(lang), ev["descr"].get(lang), ev["articles"].get(lang)
-            if label or article:
-                old = con.execute("SELECT article, summary FROM event_text WHERE qid=? AND lang=?", (qid, lang)).fetchone()
-                summary = old["summary"] if old and old["article"] == article else None
-                con.execute("INSERT OR REPLACE INTO event_text (qid, lang, label, descr, article, summary) VALUES (?,?,?,?,?,?)",
-                            (qid, lang, label, descr, article, summary))
     con.commit()
     return len(events)
 
@@ -378,43 +473,84 @@ def fetch_summaries(con, qids: list[str] | None = None) -> int:
 
 # --- Commandes ----------------------------------------------------------------------
 
-def collect_period(con, t_a: float, t_b: float, min_sl: int, summaries: bool = True) -> int:
-    qids = list_qids(t_a, t_b, min_sl)
+def collect_period(con, t_a: float, t_b: float, min_sl: int, summaries: bool = True, layer: str = "events") -> int:
+    props = {"events": EVENT_PROPS, "culture": CULTURE_PROPS, "people": PERSON_PROPS}[layer]
+    qids = list_qids(t_a, t_b, min_sl, props=props)
     if not qids:
         return 0
-    events = [ev for ent in fetch_entities(qids).values() if (ev := parse_entity(ent, (t_a, t_b)))]
-    n = save_events(con, events)
+    ents = fetch_entities(qids).values()
+    if layer == "people":
+        items = [p for ent in ents if (p := parse_person(ent, (t_a, t_b)))]
+        n = save_people(con, items)
+    else:
+        mode = "culture" if layer == "culture" else "event"
+        items = [ev for ent in ents if (ev := parse_entity(ent, (t_a, t_b), mode))]
+        n = save_events(con, items)
+    events = items
     if summaries:
         fetch_summaries(con, [e["qid"] for e in events])
     return n
 
 
+def save_people(con, people: list[dict]) -> int:
+    if not people:
+        return 0
+    countries = {c for p in people for c in p["countries"]}
+    store_labels(con, {o for p in people for o in p["occupations"]} | countries, countries)
+    for pr in people:
+        qid = pr["qid"]
+        occ = [r[0] for o in pr["occupations"]
+               for r in con.execute("SELECT label FROM entity_label WHERE lang='en' AND qid=?", (o,))]
+        tb, pb, rb = pr["birth"]
+        td, pd, rd = pr["death"] if pr["death"] else (None, None, None)
+        con.execute("INSERT OR REPLACE INTO person VALUES (?,?,?,?,?,?,?,?,?)",
+                    (qid, tb, td, pb, pd, rb, rd, pr["sl"], classify_person(occ)))
+        con.execute("DELETE FROM person_country WHERE qid=?", (qid,))
+        con.executemany("INSERT OR IGNORE INTO person_country VALUES (?,?)", [(qid, c) for c in pr["countries"]])
+        save_texts(con, pr)
+    con.commit()
+    return len(people)
+
+
 def cmd_events(args) -> None:
+    run_years(args, "events")
+
+
+def cmd_culture(args) -> None:
+    run_years(args, "culture")
+
+
+def cmd_people(args) -> None:
+    run_years(args, "people")
+
+
+def run_years(args, layer: str) -> None:
     con = connect(args.db)
     total = 0
+    noun = {"events": "événements", "culture": "découvertes et œuvres", "people": "personnes"}[layer]
     for year in range(args.start, args.stop):
-        chunk = f"events:{year}:{args.min_sitelinks}"
+        chunk = f"{layer}:{year}:{args.min_sitelinks}"
         if not args.force and con.execute("SELECT 1 FROM collected WHERE chunk=?", (chunk,)).fetchone():
             log(f"{year} : déjà collecté (--force pour refaire)")
             continue
         try:
-            n = collect_period(con, fyear(year), fyear(year + 1), args.min_sitelinks, not args.no_summaries)
+            n = collect_period(con, fyear(year), fyear(year + 1), args.min_sitelinks, not args.no_summaries, layer)
         except Exception as e:  # noqa: BLE001 — on passe à l'année suivante
             log(f"{year} : échec ({e}). Relance plus tard : les années réussies sont gardées.")
             continue
         con.execute("INSERT OR REPLACE INTO collected VALUES (?,?)", (chunk, datetime.now(timezone.utc).isoformat()))
         con.commit()
         total += n
-        log(f"{year} : {n} événements")
+        log(f"{year} : {n} {noun}")
         time.sleep(2)  # politesse envers le service public de Wikidata
-    log(f"Terminé : {total} événements ajoutés ou mis à jour.")
+    log(f"Terminé : {total} {noun} ajoutés ou mis à jour.")
 
 
 def cmd_update(args) -> None:
     """Relit par l'API les événements déjà en base, sans le service SPARQL :
     liens, sous-thèmes, tri des non-événements, codes pays, résumés."""
     con = connect(args.db)
-    rows = con.execute("SELECT qid, t_lo, precision FROM events ORDER BY t_lo").fetchall()
+    rows = con.execute("SELECT qid, t_lo, precision, kind FROM events ORDER BY t_lo").fetchall()
     log(f"Mise à jour de {len(rows)} éléments…")
     for i in range(0, len(rows), 200):
         part = rows[i:i + 200]
@@ -425,7 +561,8 @@ def cmd_update(args) -> None:
             if not ent:
                 continue
             w = span_for(r["precision"]) + 1e-6
-            ev = parse_entity(ent, (r["t_lo"] - 1e-6, r["t_lo"] + w))
+            mode = "culture" if r["kind"] in ("work", "discovery") else "event"
+            ev = parse_entity(ent, (r["t_lo"] - 1e-6, r["t_lo"] + w), mode)
             if ev:
                 events.append(ev)
         save_events(con, events)
@@ -433,6 +570,53 @@ def cmd_update(args) -> None:
     if not args.no_summaries:
         log(f"Résumés Wikipédia : {fetch_summaries(con)} ajoutés.")
     log("Terminé.")
+
+
+def _qualifier_time(st: dict, prop: str) -> float | None:
+    for q in st.get("qualifiers", {}).get(prop, []):
+        v = q.get("datavalue", {}).get("value")
+        if isinstance(v, dict) and "time" in v:
+            return parse_wikidata_time(v["time"], api=True)
+    return None
+
+
+def lane_countries(con, top: int) -> list[str]:
+    qids = []
+    try:
+        lanes = json.loads((ROOT / "web" / "lanes.json").read_text(encoding="utf-8"))["lanes"]
+        qids = [q for l in lanes for q in l["qids"] if q != "_"]
+    except (OSError, ValueError, KeyError):
+        pass
+    qids += [r[0] for r in con.execute(
+        "SELECT country FROM event_country GROUP BY country ORDER BY COUNT(*) DESC LIMIT ?", (top,))]
+    return list(dict.fromkeys(qids))
+
+
+def cmd_rulers(args) -> None:
+    """Chefs d'État (P35) et de gouvernement (P6) des pays des couloirs, avec leurs dates."""
+    con = connect(args.db)
+    countries = lane_countries(con, args.top)
+    log(f"Gouvernants de {len(countries)} pays/États…")
+    persons: set[str] = set()
+    n = 0
+    for qid, ent in fetch_entities(countries, "claims").items():
+        con.execute("DELETE FROM office_term WHERE country=?", (qid,))
+        for prop, role in (("P35", "etat"), ("P6", "gouvernement")):
+            for st in _all_statements(ent, prop):
+                v = st.get("mainsnak", {}).get("datavalue", {}).get("value")
+                t0 = _qualifier_time(st, "P580")
+                if not isinstance(v, dict) or "id" not in v or t0 is None:
+                    continue  # sans date de début, impossible à placer
+                con.execute("INSERT OR REPLACE INTO office_term VALUES (?,?,?,?,?)",
+                            (qid, role, v["id"], t0, _qualifier_time(st, "P582")))
+                persons.add(v["id"])
+                n += 1
+        start, end = _times(ent, "P571"), _times(ent, "P576")
+        con.execute("INSERT OR REPLACE INTO country_state VALUES (?,?,?)",
+                    (qid, min(start)[0] if start else None, max(end)[0] if end else None))
+    store_labels(con, persons, set())
+    con.commit()
+    log(f"Terminé : {n} mandats, {len(persons)} personnes.")
 
 
 def cmd_summaries(args) -> None:
@@ -515,6 +699,11 @@ def cmd_stats(args) -> None:
     s = con.execute("SELECT COUNT(*), SUM(summary IS NOT NULL AND summary != '') FROM event_text WHERE article IS NOT NULL").fetchone()
     log(f"Résumés Wikipédia : {s[1] or 0}/{s[0]}")
     log(f"Liens entre éléments : {con.execute('SELECT COUNT(*) FROM event_link').fetchone()[0]}")
+    for kind, name in (("discovery", "Découvertes, inventions"), ("work", "Œuvres")):
+        log(f"{name} : {con.execute('SELECT COUNT(*) FROM events WHERE kind=?', (kind,)).fetchone()[0]}")
+    log(f"Personnes : {con.execute('SELECT COUNT(*) FROM person').fetchone()[0]}")
+    log(f"Mandats de gouvernants : {con.execute('SELECT COUNT(*) FROM office_term').fetchone()[0]}")
+    log(f"Pages Wikipédia (toutes langues) : {con.execute('SELECT COUNT(*) FROM wiki_page').fetchone()[0]}")
     for r in con.execute("SELECT m.name, m.label, COUNT(*), COUNT(DISTINCT p.entity) FROM series_meta m "
                          "JOIN series_points p ON p.name = m.name GROUP BY m.name"):
         log(f"Série {r[0]} ({r[1]}) : {r[2]} points, {r[3]} pays/zones")
@@ -533,6 +722,20 @@ def main() -> None:
     e.add_argument("--force", action="store_true", help="recollecter les années déjà faites")
     e.add_argument("--no-summaries", action="store_true", help="ne pas télécharger les résumés Wikipédia")
     e.set_defaults(func=cmd_events)
+
+    for name, func, sl, helptxt in (("culture", cmd_culture, 25, "découvertes, inventions (P575) et œuvres publiées (P577)"),
+                                    ("people", cmd_people, 40, "personnes, par année de naissance (calque « Vies »)")):
+        c = sub.add_parser(name, help=helptxt)
+        c.add_argument("--from", dest="start", type=int, required=True, help="première année (incluse)")
+        c.add_argument("--to", dest="stop", type=int, required=True, help="dernière année (exclue)")
+        c.add_argument("--min-sitelinks", type=int, default=sl, help=f"nombre minimum de Wikipédias (défaut {sl})")
+        c.add_argument("--force", action="store_true", help="recollecter les années déjà faites")
+        c.add_argument("--no-summaries", action="store_true", help="ne pas télécharger les résumés Wikipédia")
+        c.set_defaults(func=func)
+
+    r = sub.add_parser("rulers", help="chefs d'État et de gouvernement des pays des couloirs")
+    r.add_argument("--top", type=int, default=40, help="nombre de pays les plus présents à ajouter (défaut 40)")
+    r.set_defaults(func=cmd_rulers)
 
     u = sub.add_parser("update", help="relire les événements en base (liens, thèmes, résumés)")
     u.add_argument("--no-summaries", action="store_true", help="ne pas télécharger les résumés Wikipédia")

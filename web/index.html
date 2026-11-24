@@ -39,9 +39,20 @@
       <span class="sr-only">Aller à une date</span>
       <input id="goto" type="text" placeholder="Aller à : 1945-05-08, -500, 66 Ma…">
     </label>
-    <button id="theme-toggle" class="icon-btn" aria-label="Basculer entre fond clair et fond sombre" title="Fond clair / sombre">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
-    </button>
+    <div class="top-actions">
+      <button id="btn-today" class="text-btn" title="Ce qui s'est passé un même jour à travers les siècles">Ce jour-là</button>
+      <button id="btn-compare" class="text-btn" aria-pressed="false" title="Afficher une deuxième frise pour comparer deux époques">2 époques</button>
+      <div class="menu">
+        <button id="btn-export" class="text-btn" aria-haspopup="true" aria-expanded="false">Exporter</button>
+        <div id="export-menu" class="menu-list" hidden>
+          <button data-export="link">Copier le lien de cette vue</button>
+          <button data-export="print">Imprimer ou enregistrer en PDF</button>
+        </div>
+      </div>
+      <button id="theme-toggle" class="icon-btn" aria-label="Basculer entre fond clair et fond sombre" title="Fond clair / sombre">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+      </button>
+    </div>
   </header>
 
   <section class="overview" aria-label="Vue d'ensemble du temps">
@@ -52,18 +63,23 @@
   <div class="body">
     <aside class="sidebar" aria-label="Filtres et calques">
       <div class="block">
+        <div class="block-title">Calques</div>
+        <div id="layers"></div>
+        <div id="person-domains" class="sub-block" hidden></div>
+        <button id="btn-personal-add" class="small-btn" hidden>+ Ajouter à ma frise</button>
+      </div>
+      <div class="block">
         <div class="block-title">Courbes de fond</div>
-        <label class="sr-only" for="series-world">Courbe mondiale</label>
         <div class="hint">Monde (fond de la frise)</div>
+        <label class="sr-only" for="series-world">Courbe mondiale</label>
         <select id="series-world"></select>
-        <label class="sr-only" for="series-lane">Courbe par pays</label>
         <div class="hint">Par pays (fond de chaque couloir)</div>
+        <label class="sr-only" for="series-lane">Courbe par pays</label>
         <select id="series-lane"></select>
       </div>
       <div class="block">
-        <div class="block-title">Thèmes</div>
+        <div class="block-title">Thèmes des événements</div>
         <div id="themes"></div>
-        <label><input type="checkbox" id="include-other"> Inclure œuvres, unités, organisations</label>
       </div>
       <div class="block">
         <div class="block-title">Langue des titres</div>
@@ -76,27 +92,15 @@
           <summary>Autres pays présents</summary>
           <div id="other-countries"></div>
         </details>
+        <button id="btn-coverage" class="small-btn">Angles morts : couverture par pays</button>
       </div>
       <div class="block small" id="db-stats"></div>
     </aside>
 
     <main class="main">
-      <div class="main-head">
-        <h1 id="title">…</h1>
-        <span id="series-value" class="muted"></span>
-        <span id="loading" class="muted" hidden>chargement…</span>
-      </div>
-      <div id="timeline" class="timeline" tabindex="0" aria-label="Frise : molette pour zoomer, glisser pour se déplacer, flèches et + − au clavier">
-        <svg id="curve" class="curve" preserveAspectRatio="none" aria-hidden="true"></svg>
-        <div class="ruler-caption" id="ruler-caption">UTC</div>
-        <div id="ruler" class="ruler"></div>
-        <div id="lanes" class="lanes"></div>
-        <svg id="links-layer" class="links-layer" aria-hidden="true"></svg>
-        <div id="hover" class="hover" hidden><div class="hover-label"></div></div>
-        <div id="empty" class="empty" hidden></div>
-      </div>
-      <div class="legend muted">Molette : zoom · glisser : se déplacer · double-clic : zoom avant · hachuré = dure dans le temps · pointillé = date connue à l'année ou au mois · au survol, heure locale de chaque couloir</div>
-      <article id="detail" class="detail" hidden></article>
+      <div id="views"></div>
+      <div class="legend muted">Molette ou pincement : zoom · glisser : se déplacer · double-clic : zoom avant · hachuré = dure dans le temps · pointillé = date connue à l'année ou au mois · au survol, heure locale de chaque couloir</div>
+      <article id="panel" class="detail" hidden></article>
     </main>
   </div>
 </div>

@@ -128,7 +128,9 @@ export function ticks(t0, t1, widthPx, minPx = 90, now = nowFyear()) {
       // pas l'année astronomique −500 qui vaut 501 av. J.-C.).
       const v = k * n;
       const tt = v < 0 && v > -10000 ? v + 1 : v;
-      out.push({ t: tt, label: formatYear(tt, now) });
+      // À l'échelle des millions d'années, la graduation 0 n'est pas « 1 av. J.-C. »
+      const label = v === 0 && n >= 10000 ? "notre ère" : formatYear(tt, now);
+      out.push({ t: tt, label });
     }
     return { unit, ticks: out };
   }
@@ -220,3 +222,11 @@ export function logTicks(t0, t1, widthPx, minPx = 80, now = nowFyear()) {
   }
   return kept.sort((a, b) => a.t - b.t);
 }
+
+// Noms des précisions Wikidata (comme strata/timeutil.py)
+export const PRECISION_NAMES_FR = {
+  0: "milliard d'années", 1: "centaine de millions d'années", 2: "dizaine de millions d'années",
+  3: "million d'années", 4: "centaine de milliers d'années", 5: "dizaine de milliers d'années",
+  6: "millénaire", 7: "siècle", 8: "décennie", 9: "année", 10: "mois", 11: "jour", 12: "heure",
+  13: "minute", 14: "seconde",
+};

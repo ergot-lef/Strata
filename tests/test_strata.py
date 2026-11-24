@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "collector"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 
 import collect  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+import export_static  # noqa: E402
 import server  # noqa: E402
 from strata.db import connect  # noqa: E402
 from strata.themes import classify  # noqa: E402
@@ -118,6 +120,13 @@ class ApiTests(unittest.TestCase):
         c.execute(f"INSERT INTO events {cols} VALUES ('Q3',?,?,11,0,?,NULL,9,'autre','',1)", (t, t + 1 / 365.25, d))
         c.execute(f"INSERT INTO events {cols} VALUES ('Q4',1800.0,1801.0,9,0,'d',NULL,9,'autre','',1)")
         c.execute(f"INSERT INTO events {cols} VALUES ('Q5',?,?,11,0,?,NULL,99,'autre','',0)", (t, t + 1 / 365.25, d))
+        c.execute("UPDATE events SET kind='other' WHERE qid='Q5'")
+        c.execute("INSERT INTO event_link VALUES ('Q2','P828','Q9')")  # Q9 : cause hors base
+        c.execute("INSERT INTO person VALUES ('P1', 1879.2, 1955.3, 11, 11, '+1879-03-14T00:00:00Z', '+1955-04-18T00:00:00Z', 200, 'science')")
+        c.execute("INSERT INTO person VALUES ('P2', 1890.0, NULL, 9, NULL, '+1890-00-00T00:00:00Z', NULL, 50, 'politique')")
+        c.execute("INSERT INTO person_country VALUES ('P1','Q142')")
+        c.execute("INSERT INTO office_term VALUES ('Q142','etat','P2',1944.6,1946.1)")
+        c.execute("INSERT INTO entity_label VALUES ('P2','fr','Chef fictif')")
         c.execute("INSERT INTO event_link VALUES ('Q1','P828','Q2')")
         c.executemany("INSERT INTO event_country VALUES (?,?)", [("Q1", "Q142"), ("Q1", "Q30"), ("Q2", "Q142")])
         c.executemany("INSERT INTO event_text (qid, lang, label, descr, article) VALUES (?,?,?,?,?)", [
@@ -155,9 +164,54 @@ class ApiTests(unittest.TestCase):
 
     def test_event_detail_links_and_same_day(self):
         ev = server.api_event(self.con, {"qid": "Q2"})["event"]
-        self.assertEqual([(l["kind"], l["qid"]) for l in ev["links"]], [("consequence", "Q1")])
+        self.assertEqual(sorted((l["kind"], l["qid"]) for l in ev["links"]), [("cause", "Q9"), ("consequence", "Q1")])
         self.assertIn("Q1", {e["qid"] for e in ev["same_day"]})
         self.assertNotIn("Q5", {e["qid"] for e in ev["same_day"]})
+
+    def test_people_rulers_chain_and_coverage(self):
+        ppl = server.api_people(self.con, {"from": "1945.0", "to": "1946.0", "countries": "Q142,_"})["people"]
+        self.assertEqual({p["qid"] for p in ppl}, {"P1", "P2"})   # P2 sans décès : supposé vivant (≤ 100 ans)
+        self.assertEqual(server.api_people(self.con, {"from": "1995.0", "to": "1996.0"})["people"], [])
+        person = server.api_person(self.con, {"qid": "P2"})["person"]
+        self.assertEqual(person["offices"][0]["role"], "etat")
+        terms = server.api_rulers(self.con, {"from": "1945.0", "to": "1946.0", "countries": "Q142"})["terms"]
+        self.assertEqual(terms[0]["labels"]["fr"], "Chef fictif")
+        chain = server.api_chain(self.con, {"qid": "Q1", "dir": "causes"})["nodes"]
+        self.assertEqual([(n["qid"], n["level"]) for n in chain], [("Q2", 1), ("Q9", 2)])
+        self.assertIsNone(chain[1]["t0"])
+        down = server.api_chain(self.con, {"qid": "Q9", "dir": "consequences"})["nodes"]
+        self.assertEqual([n["qid"] for n in down], ["Q2", "Q1"])
+        cov = server.api_coverage(self.con, {"from": "1945.0", "to": "1946.0"})["countries"]
+        self.assertEqual(cov[0]["qid"], "Q142")
+        dens = server.api_density(self.con, {"from": "1945.0", "to": "1946.0", "countries": "Q142", "bins": "12"})
+        self.assertEqual(sum(dens["counts"]["Q142"]), 2)
+
+    def test_onthisday_and_personal(self):
+        otd = server.api_onthisday(self.con, {"m": "5", "d": "8"})
+        self.assertIn("Q1", {e["qid"] for e in otd["events"]})
+        self.assertNotIn("Q5", {e["qid"] for e in otd["events"]})
+        new = server.personal_add(self.con, {"t0": 1990.5, "title": "Test perso"})
+        self.assertEqual(server.api_personal(self.con, {})["events"][0]["title"], "Test perso")
+        server.personal_delete(self.con, {"id": new["id"]})
+        self.assertEqual(server.api_personal(self.con, {})["events"], [])
+        with self.assertRaises(ValueError):
+            server.personal_add(self.con, {"t0": 1990, "title": "  "})
+
+    def test_static_export_never_contains_personal(self):
+        server.personal_add(self.con, {"t0": 1990.5, "title": "Secret de famille"})
+        out = Path(self.tmp.name) / "site"
+        res = export_static.export(self.con, out, 1000, 1000)
+        data = (out / "data" / "strata.json").read_text(encoding="utf-8")
+        self.assertNotIn("Secret de famille", data)
+        self.assertEqual(res["events"], 5)
+        self.assertTrue((out / "index.html").exists())
+
+    def test_compare_without_network(self):
+        self.con.execute("INSERT INTO wiki_page VALUES ('Q1','ru','Тест',NULL,NULL)")
+        self.con.execute("UPDATE event_text SET summary='Résumé A' WHERE qid='Q1' AND lang='fr'")
+        pages = {p["lang"]: p for p in server.api_compare(self.con, {"qid": "Q1"})["pages"]}
+        self.assertEqual(pages["fr"]["summary"], "Résumé A")
+        self.assertEqual(pages["ru"]["title"], "Тест")
 
     def test_migration_from_v01(self):
         import sqlite3

@@ -95,6 +95,63 @@ CREATE TABLE IF NOT EXISTS series_meta (
     source TEXT
 );
 
+-- Toutes les Wikipédias où un élément a un article (pour comparer les récits)
+CREATE TABLE IF NOT EXISTS wiki_page (
+    qid      TEXT NOT NULL,
+    lang     TEXT NOT NULL,
+    title    TEXT NOT NULL,
+    summary  TEXT,                -- début de l'article (rempli à la demande)
+    length   INTEGER,             -- taille de l'article en octets
+    PRIMARY KEY (qid, lang)
+);
+
+-- Personnes (calque « Vies ») : leurs textes vont dans event_text
+CREATE TABLE IF NOT EXISTS person (
+    qid        TEXT PRIMARY KEY,
+    t_birth    REAL NOT NULL,
+    t_death    REAL,
+    prec_birth INTEGER,
+    prec_death INTEGER,
+    birth_raw  TEXT,
+    death_raw  TEXT,
+    sitelinks  INTEGER NOT NULL DEFAULT 0,
+    domain     TEXT NOT NULL DEFAULT 'autre'
+);
+CREATE INDEX IF NOT EXISTS ix_person_birth ON person(t_birth);
+CREATE TABLE IF NOT EXISTS person_country (
+    qid     TEXT NOT NULL,
+    country TEXT NOT NULL,
+    PRIMARY KEY (qid, country)
+);
+CREATE INDEX IF NOT EXISTS ix_person_country_c ON person_country(country);
+
+-- Chefs d'État (P35) et de gouvernement (P6) des pays, avec leurs dates
+CREATE TABLE IF NOT EXISTS office_term (
+    country TEXT NOT NULL,
+    role    TEXT NOT NULL,        -- 'etat' ou 'gouvernement'
+    person  TEXT NOT NULL,
+    t0      REAL NOT NULL,
+    t1      REAL,                 -- NULL = toujours en fonction (ou fin inconnue)
+    PRIMARY KEY (country, role, person, t0)
+);
+-- Existence des États (P571 création, P576 dissolution)
+CREATE TABLE IF NOT EXISTS country_state (
+    qid TEXT PRIMARY KEY,
+    t0  REAL,
+    t1  REAL
+);
+
+-- Frise personnelle (reste sur ton ordinateur, jamais exportée en ligne)
+CREATE TABLE IF NOT EXISTS personal_event (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    t0      REAL NOT NULL,
+    t1      REAL,
+    date_raw TEXT,
+    title   TEXT NOT NULL,
+    notes   TEXT,
+    created TEXT
+);
+
 -- Périodes déjà collectées (pour reprendre là où on s'est arrêté)
 CREATE TABLE IF NOT EXISTS collected (
     chunk  TEXT PRIMARY KEY,
@@ -107,6 +164,7 @@ _ADDED_COLUMNS = [
     ("events", "subtheme", "TEXT NOT NULL DEFAULT ''"),
     ("events", "is_event", "INTEGER NOT NULL DEFAULT 1"),
     ("event_text", "summary", "TEXT"),
+    ("events", "kind", "TEXT NOT NULL DEFAULT 'event'"),  # event, discovery, work, other
 ]
 
 
@@ -115,6 +173,7 @@ def _migrate(con: sqlite3.Connection) -> None:
         cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
         if col not in cols:
             con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    con.execute("UPDATE events SET kind='other' WHERE is_event=0 AND kind='event'")
     # Version 0.1 : une seule série mondiale par nom, dans la table « series »
     old = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='series'").fetchone()
     if old:

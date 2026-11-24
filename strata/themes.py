@@ -74,8 +74,12 @@ TAXONOMY = [
     ]),
     ("culture", "Culture", [
         ("cinema", "Cinéma, récompense", ["film festival", "award ceremony", "ceremony", "premiere"]),
-        ("musique", "Concert, festival", ["music festival", "festival", "concert", "concert tour", "song contest"]),
+        ("musique", "Musique, concert", ["music festival", "festival", "concert", "concert tour", "song contest"]),
         ("exposition", "Exposition", ["exhibition", "art exhibition", "biennale"]),
+        ("litterature", "Livre, littérature", ["literary work", "novel", "book", "poem", "play", "essay", "manifesto"]),
+        ("art", "Peinture, sculpture, architecture", ["painting", "sculpture", "artwork", "building", "monument",
+                                                     "photograph", "work of art"]),
+        ("jeu", "Jeu vidéo, bande dessinée", ["video game", "comic", "manga", "board game"]),
         ("concours", "Concours", ["contest", "competition", "beauty pageant"]),
     ]),
     ("sport", "Sport", [
@@ -107,7 +111,10 @@ def _rx(words):
     return re.compile(r"\b(" + "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True)) + r")s?\b")
 
 
-_PATTERNS = [(theme, sub, _rx(words)) for theme, _, subs in TAXONOMY for sub, _, words in subs]
+# Sous-thèmes réservés aux œuvres (calque « Œuvres ») : jamais utilisés pour
+# classer un événement, sinon un roman deviendrait un « événement ».
+WORK_ONLY = {"litterature", "art", "jeu"}
+_PATTERNS = [(theme, sub, _rx(words)) for theme, _, subs in TAXONOMY for sub, _, words in subs if sub not in WORK_ONLY]
 _NON_EVENT = _rx(NON_EVENT)
 # Expressions à retirer avant de chercher un type d'événement : « video game »
 # ne doit pas être lu comme « game » (sport), ni « military unit » comme une opération.
@@ -139,3 +146,64 @@ def classify(type_labels: list[str]) -> str:
 def taxonomy_json() -> list[dict]:
     return [{"id": t, "name": n, "subs": [{"id": s, "name": sn} for s, sn, _ in subs]} for t, n, subs in TAXONOMY] \
         + [{"id": "autre", "name": "Autre", "subs": []}]
+
+
+# --- Œuvres (P577) et découvertes (P575) --------------------------------------
+
+_WORK = [
+    ("cinema", ["film", "television series", "television program", "documentary", "animated", "episode"]),
+    ("musique", ["album", "single", "song", "opera", "symphony", "composition", "musical work"]),
+    ("litterature", ["literary work", "novel", "book", "poem", "play", "essay", "manifesto", "written work",
+                     "periodical", "newspaper", "magazine", "scholarly article", "treatise"]),
+    ("art", ["painting", "sculpture", "artwork", "photograph", "building", "monument", "work of art"]),
+    ("jeu", ["video game", "comic", "manga", "board game"]),
+]
+_WORK_PATTERNS = [(sub, _rx(words)) for sub, words in _WORK]
+
+
+def classify_work(type_labels: list[str]) -> tuple[str, str]:
+    text = " ".join(t.lower() for t in type_labels if t)
+    for sub, pattern in _WORK_PATTERNS:
+        if pattern.search(text):
+            return "culture", sub
+    return "culture", ""
+
+
+# --- Domaines des personnes (P106 occupation) ----------------------------------
+
+PERSON_DOMAINS = [
+    ("politique", "Politique", ["politician", "statesman", "monarch", "diplomat", "head of state", "president",
+                               "prime minister", "king", "queen", "emperor", "aristocrat", "noble", "revolutionary",
+                               "activist", "trade unionist", "lawyer", "judge", "civil servant"]),
+    ("guerre", "Militaire", ["military officer", "military personnel", "soldier", "general", "admiral",
+                             "military leader", "resistance fighter", "aviator", "fighter pilot"]),
+    ("science", "Sciences, techniques", ["physicist", "chemist", "mathematician", "biologist", "astronomer",
+                                         "engineer", "inventor", "physician", "scientist", "geologist", "botanist",
+                                         "computer scientist", "economist", "psychologist", "explorer",
+                                         "astronaut", "naturalist", "zoologist", "geographer"]),
+    ("culture", "Arts, lettres", ["writer", "novelist", "poet", "painter", "sculptor", "composer", "musician",
+                                  "singer", "actor", "actress", "film director", "architect", "photographer",
+                                  "playwright", "philosopher", "journalist", "screenwriter", "dancer", "artist",
+                                  "historian", "comedian", "illustrator"]),
+    ("sport", "Sport", ["athlete", "footballer", "association football player", "cyclist", "tennis player",
+                        "boxer", "racing driver", "swimmer", "basketball player", "chess player", "player"]),
+    ("religion", "Religion", ["priest", "theologian", "bishop", "pope", "rabbi", "imam", "missionary", "monk",
+                              "nun", "saint", "religious leader", "cardinal"]),
+    ("economie", "Économie, entreprise", ["businessperson", "entrepreneur", "banker", "industrialist",
+                                          "merchant", "investor"]),
+]
+_PERSON_PATTERNS = [(d, _rx(words)) for d, _, words in PERSON_DOMAINS]
+
+
+def classify_person(occupation_labels: list[str]) -> str:
+    """Domaine de la première occupation reconnue (l'ordre de Wikidata compte)."""
+    for occ in occupation_labels:
+        o = (occ or "").lower()
+        for d, pattern in _PERSON_PATTERNS:
+            if pattern.search(o):
+                return d
+    return "autre"
+
+
+def person_domains_json() -> list[dict]:
+    return [{"id": d, "name": n} for d, n, _ in PERSON_DOMAINS] + [{"id": "autre", "name": "Autre"}]

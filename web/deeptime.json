@@ -1,0 +1,67 @@
+{
+  "_comment": "Temps profond. Âges en millions d'années (Ma) avant aujourd'hui. Périodes : tableau chronostratigraphique international de l'ICS, version 2024/12 (stratigraphy.org). Jalons : valeurs approchées, souvent débattues (« approx » = ordre de grandeur).",
+  "source": "ICS, International Chronostratigraphic Chart v2024/12",
+  "bands": [
+    { "row": "Éons", "items": [
+      { "name": "Hadéen", "from": 4567.3, "to": 4031, "color": "#AE027E" },
+      { "name": "Archéen", "from": 4031, "to": 2500, "color": "#F0047F" },
+      { "name": "Protérozoïque", "from": 2500, "to": 538.8, "color": "#F73563" },
+      { "name": "Phanérozoïque", "from": 538.8, "to": 0, "color": "#9AD9DD" }
+    ]},
+    { "row": "Ères", "items": [
+      { "name": "Paléozoïque", "from": 538.8, "to": 251.902, "color": "#99C08D" },
+      { "name": "Mésozoïque", "from": 251.902, "to": 66, "color": "#67C5CA" },
+      { "name": "Cénozoïque", "from": 66, "to": 0, "color": "#F2F91D" }
+    ]},
+    { "row": "Périodes", "items": [
+      { "name": "Cambrien", "from": 538.8, "to": 486.85, "color": "#7FA056" },
+      { "name": "Ordovicien", "from": 486.85, "to": 443.1, "color": "#009270" },
+      { "name": "Silurien", "from": 443.1, "to": 419.62, "color": "#B3E1B6" },
+      { "name": "Dévonien", "from": 419.62, "to": 358.86, "color": "#CB8C37" },
+      { "name": "Carbonifère", "from": 358.86, "to": 298.9, "color": "#67A599" },
+      { "name": "Permien", "from": 298.9, "to": 251.902, "color": "#F04028" },
+      { "name": "Trias", "from": 251.902, "to": 201.4, "color": "#812B92" },
+      { "name": "Jurassique", "from": 201.4, "to": 143.1, "color": "#34B2C9" },
+      { "name": "Crétacé", "from": 143.1, "to": 66, "color": "#7FC64E" },
+      { "name": "Paléogène", "from": 66, "to": 23.04, "color": "#FD9A52" },
+      { "name": "Néogène", "from": 23.04, "to": 2.58, "color": "#FFE619" },
+      { "name": "Quaternaire", "from": 2.58, "to": 0, "color": "#F9F97F" }
+    ]}
+  ],
+  "milestones": [
+    { "name": "Big Bang", "ma": 13800, "kind": "cosmos" },
+    { "name": "Fond diffus cosmologique (380 000 ans après le Big Bang)", "ma": 13799.62, "kind": "cosmos" },
+    { "name": "Premières étoiles", "ma": 13600, "kind": "cosmos", "approx": true },
+    { "name": "Naissance du Système solaire", "ma": 4567.3, "kind": "cosmos" },
+    { "name": "Formation de la Terre", "ma": 4540, "kind": "terre", "approx": true },
+    { "name": "Formation de la Lune", "ma": 4500, "kind": "terre", "approx": true },
+    { "name": "Plus anciennes traces de vie (débattues)", "ma": 3700, "kind": "vie", "approx": true },
+    { "name": "Grande Oxydation", "ma": 2400, "kind": "terre", "approx": true },
+    { "name": "Premiers eucaryotes", "ma": 1800, "kind": "vie", "approx": true },
+    { "name": "Explosion cambrienne", "ma": 538.8, "kind": "vie" },
+    { "name": "Premières plantes terrestres", "ma": 470, "kind": "vie", "approx": true },
+    { "name": "Extinction de la fin de l'Ordovicien", "ma": 443.1, "kind": "extinction" },
+    { "name": "Premiers tétrapodes", "ma": 375, "kind": "vie", "approx": true },
+    { "name": "Extinction du Dévonien supérieur", "ma": 372, "kind": "extinction", "approx": true },
+    { "name": "Extinction Permien-Trias (la plus grande)", "ma": 251.902, "kind": "extinction" },
+    { "name": "Premiers dinosaures", "ma": 230, "kind": "vie", "approx": true },
+    { "name": "Extinction Trias-Jurassique", "ma": 201.4, "kind": "extinction" },
+    { "name": "Extinction Crétacé-Paléogène (fin des dinosaures non aviens)", "ma": 66, "kind": "extinction" },
+    { "name": "Premiers homininés", "ma": 7, "kind": "humain", "approx": true },
+    { "name": "Genre Homo", "ma": 2.8, "kind": "humain", "approx": true },
+    { "name": "Homo sapiens", "ma": 0.3, "kind": "humain", "approx": true },
+    { "name": "Début de l'Holocène", "ma": 0.0117, "kind": "terre" },
+    { "name": "Premières agricultures", "ma": 0.011, "kind": "humain", "approx": true },
+    { "name": "Premières écritures", "ma": 0.0052, "kind": "humain", "approx": true }
+  ],
+  "before_big_bang": {
+    "title": "Avant le Big Bang : hypothèses",
+    "intro": "La physique actuelle ne décrit pas les tout premiers instants : en deçà du temps de Planck (environ 10⁻⁴³ seconde), relativité générale et mécanique quantique ne s'accordent plus. Il n'existe aucune observation de ce qui pourrait précéder. Voici les principales pistes théoriques, sans consensus.",
+    "items": [
+      { "name": "Pas d'« avant »", "text": "Le temps lui-même commencerait avec l'Univers : demander ce qu'il y avait avant n'aurait pas de sens (idée de l'univers « sans bord » de Hartle et Hawking)." },
+      { "name": "Inflation éternelle", "text": "Notre Univers serait une bulle parmi d'autres, nées d'une phase d'inflation qui ne s'arrête jamais partout à la fois." },
+      { "name": "Univers cyclique", "text": "Une succession d'univers : cycles de contraction et d'expansion (modèle ekpyrotique) ou éons successifs (cosmologie cyclique conforme de Penrose)." },
+      { "name": "Grand rebond", "text": "Un univers antérieur se serait contracté puis aurait « rebondi » au lieu d'atteindre une singularité (cosmologie quantique à boucles)." }
+    ]
+  }
+}
