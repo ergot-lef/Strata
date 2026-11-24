@@ -6,10 +6,13 @@
 
 API :
     GET /api/events?from=1945.0&to=1945.5&countries=Q142,Q30&per_lane=25
-    GET /api/countries?from=1945.0&to=1945.5
-    GET /api/series                 (liste)   /api/series?name=population
+                   [&themes=guerre,politique][&sub_off=sport.match][&include_other=1]
+    GET /api/event?qid=Q...          fiche complète : résumés, liens, même jour
+    GET /api/countries[?from=&to=]
+    GET /api/themes
+    GET /api/series                  liste des courbes
+    GET /api/series?name=population&entities=OWID_WRL,FRA,DEU
     GET /api/search?q=hiroshima
-    GET /api/event?qid=Q...
     GET /api/stats
 """
 
@@ -24,38 +27,63 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from strata.db import DEFAULT_DB, ROOT, connect  # noqa: E402
+from strata.themes import taxonomy_json  # noqa: E402
 from strata.timeutil import PRECISION_NAMES  # noqa: E402
 
 WEB_DIR = ROOT / "web"
 LANGS = ("fr", "en", "de")
+LINK_NAMES = {
+    "P828": "cause", "P1478": "cause", "P1542": "consequence", "P1536": "consequence",
+    "P155": "precede", "P156": "suit", "P361": "partie_de", "P527": "comprend", "P793": "evenement",
+}
 
 
-def _texts(con: sqlite3.Connection, qids: list[str]) -> dict[str, dict]:
+def _chunks(seq, n=500):
+    seq = list(seq)
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
+def _texts(con: sqlite3.Connection, qids, summary: bool = False) -> dict[str, dict]:
     out: dict[str, dict] = {q: {} for q in qids}
-    for i in range(0, len(qids), 500):
-        part = qids[i:i + 500]
-        sql = "SELECT qid, lang, label, descr, article FROM event_text WHERE qid IN (%s)" % ",".join("?" * len(part))
+    cols = "qid, lang, label, descr, article" + (", summary" if summary else "")
+    for part in _chunks(qids):
+        sql = f"SELECT {cols} FROM event_text WHERE qid IN ({','.join('?' * len(part))})"
         for r in con.execute(sql, part):
-            out[r["qid"]][r["lang"]] = {"label": r["label"], "descr": r["descr"], "article": r["article"]}
+            d = {"label": r["label"], "descr": r["descr"], "article": r["article"]}
+            if summary:
+                d["summary"] = r["summary"]
+            out[r["qid"]][r["lang"]] = d
     return out
 
 
-def _countries_of(con: sqlite3.Connection, qids: list[str]) -> dict[str, list[str]]:
+def _countries_of(con: sqlite3.Connection, qids) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {q: [] for q in qids}
-    for i in range(0, len(qids), 500):
-        part = qids[i:i + 500]
-        sql = "SELECT qid, country FROM event_country WHERE qid IN (%s)" % ",".join("?" * len(part))
+    for part in _chunks(qids):
+        sql = f"SELECT qid, country FROM event_country WHERE qid IN ({','.join('?' * len(part))})"
         for r in con.execute(sql, part):
             out[r["qid"]].append(r["country"])
     return out
 
 
+def _labels(con, qids) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for part in _chunks(qids):
+        sql = f"SELECT qid, lang, label FROM entity_label WHERE qid IN ({','.join('?' * len(part))})"
+        for r in con.execute(sql, part):
+            out.setdefault(r["qid"], {})[r["lang"]] = r["label"]
+    return out
+
+
 def _event_dict(r: sqlite3.Row, texts: dict, countries: dict) -> dict:
+    keys = r.keys()
     return {
         "qid": r["qid"], "t0": r["t_lo"], "t1": r["t_hi"], "precision": r["precision"],
         "precision_name": PRECISION_NAMES.get(r["precision"], ""), "span": bool(r["is_span"]),
         "date": r["date_raw"], "end": r["end_raw"], "sitelinks": r["sitelinks"], "theme": r["theme"],
-        "text": texts.get(r["qid"], {}), "countries": countries.get(r["qid"], []),
+        "subtheme": r["subtheme"] if "subtheme" in keys else "",
+        "is_event": bool(r["is_event"]) if "is_event" in keys else True,
+        "text": texts.get(r["qid"], {}), "countries": countries.get(r["qid"], []) or ["_"],
     }
 
 
@@ -63,14 +91,20 @@ def api_events(con, q: dict) -> dict:
     t_from, t_to = float(q["from"]), float(q["to"])
     per_lane = min(int(q.get("per_lane", 25)), 200)
     themes = [t for t in q.get("themes", "").split(",") if t]
+    sub_off = [s for s in q.get("sub_off", "").split(",") if s]
     countries = [c for c in q.get("countries", "").split(",") if c]
     where = ["e.t_lo <= ?", "e.t_hi >= ?"]
     params: list = [t_to, t_from]
+    if q.get("include_other") != "1":
+        where.append("e.is_event = 1")
     if themes:
-        where.append("e.theme IN (%s)" % ",".join("?" * len(themes)))
+        where.append(f"e.theme IN ({','.join('?' * len(themes))})")
         params += themes
+    if sub_off:
+        where.append(f"(e.theme || '.' || e.subtheme) NOT IN ({','.join('?' * len(sub_off))})")
+        params += sub_off
     if countries:
-        where.append("COALESCE(c.country, '_') IN (%s)" % ",".join("?" * len(countries)))
+        where.append(f"COALESCE(c.country, '_') IN ({','.join('?' * len(countries))})")
         params += countries
     # « _ » = événement sans pays (couloir « Monde »).
     # Les N événements les plus « importants » (présents dans le plus de
@@ -90,11 +124,47 @@ def api_events(con, q: dict) -> dict:
     for r in rows:
         if r["qid"] not in seen:
             seen.add(r["qid"])
-            d = _event_dict(r, texts, ctry)
-            if not d["countries"]:
-                d["countries"] = ["_"]
-            events.append(d)
+            events.append(_event_dict(r, texts, ctry))
     return {"events": events}
+
+
+def api_event(con, q: dict) -> dict:
+    qid = q.get("qid", "")
+    r = con.execute("SELECT * FROM events WHERE qid=?", (qid,)).fetchone()
+    if not r:
+        return {"event": None}
+    ev = _event_dict(r, _texts(con, [qid], summary=True), _countries_of(con, [qid]))
+
+    # Liens dans les deux sens : « A a pour cause B » vaut « B a pour conséquence A ».
+    out_links = [(LINK_NAMES.get(p, p), t) for p, t in con.execute("SELECT prop, target FROM event_link WHERE qid=?", (qid,))]
+    reverse = {"cause": "consequence", "consequence": "cause", "precede": "suit", "suit": "precede",
+               "partie_de": "comprend", "comprend": "partie_de", "evenement": "partie_de"}
+    in_links = [(reverse.get(LINK_NAMES.get(p, p), "lie"), s)
+                for p, s in con.execute("SELECT prop, qid FROM event_link WHERE target=?", (qid,))]
+    pairs = list(dict.fromkeys(out_links + in_links))
+    targets = sorted({t for _, t in pairs})
+    in_db = {row["qid"]: row for part in _chunks(targets)
+             for row in con.execute(f"SELECT qid, t_lo, precision FROM events WHERE qid IN ({','.join('?' * len(part))})", part)}
+    t_texts, t_labels = _texts(con, targets), _labels(con, targets)
+    links = []
+    for kind, t in pairs:
+        labels = {l: v.get("label") for l, v in t_texts.get(t, {}).items()} or t_labels.get(t, {})
+        row = in_db.get(t)
+        links.append({"kind": kind, "qid": t, "labels": labels,
+                      "t0": row["t_lo"] if row else None, "precision": row["precision"] if row else None})
+    ev["links"] = links
+
+    # Le même jour ailleurs (dates connues au jour près)
+    same = []
+    if (r["precision"] or 0) >= 11:
+        rows = con.execute("""SELECT * FROM events WHERE substr(date_raw,1,11) = substr(?,1,11) AND precision >= 11
+                              AND qid != ? AND is_event = 1 ORDER BY sitelinks DESC LIMIT 15""",
+                           (r["date_raw"], qid)).fetchall()
+        sq = [x["qid"] for x in rows]
+        st, sc = _texts(con, sq), _countries_of(con, sq)
+        same = [_event_dict(x, st, sc) for x in rows]
+    ev["same_day"] = same
+    return {"event": ev}
 
 
 def api_countries(con, q: dict) -> dict:
@@ -106,19 +176,30 @@ def api_countries(con, q: dict) -> dict:
     sql = f"""
         SELECT c.country AS qid, COUNT(*) AS n,
                (SELECT label FROM entity_label l WHERE l.qid = c.country AND l.lang='fr') AS fr,
-               (SELECT label FROM entity_label l WHERE l.qid = c.country AND l.lang='en') AS en
+               (SELECT label FROM entity_label l WHERE l.qid = c.country AND l.lang='en') AS en,
+               (SELECT iso3 FROM country_info i WHERE i.qid = c.country) AS iso3
         FROM event_country c JOIN events e ON e.qid = c.qid {where}
-        GROUP BY c.country ORDER BY n DESC LIMIT 300
+        GROUP BY c.country ORDER BY n DESC LIMIT 400
     """
     return {"countries": [dict(r) for r in con.execute(sql, params)]}
 
 
 def api_series(con, q: dict) -> dict:
     if "name" not in q:
-        return {"series": [dict(r) for r in con.execute("SELECT * FROM series_meta ORDER BY name")]}
-    meta = con.execute("SELECT * FROM series_meta WHERE name=?", (q["name"],)).fetchone()
-    pts = [[r["t"], r["value"]] for r in con.execute("SELECT t, value FROM series WHERE name=? ORDER BY t", (q["name"],))]
-    return {"meta": dict(meta) if meta else None, "points": pts}
+        rows = con.execute("""SELECT m.*, MIN(p.t) AS t_min, MAX(p.t) AS t_max,
+                                     SUM(p.entity = 'OWID_WRL') AS world_points
+                              FROM series_meta m LEFT JOIN series_points p ON p.name = m.name
+                              GROUP BY m.name ORDER BY m.name""")
+        return {"series": [dict(r) for r in rows]}
+    name = q["name"]
+    meta = con.execute("SELECT * FROM series_meta WHERE name=?", (name,)).fetchone()
+    entities = [e for e in q.get("entities", "OWID_WRL").split(",") if e]
+    points: dict[str, list] = {e: [] for e in entities}
+    for part in _chunks(entities):
+        sql = f"SELECT entity, t, value FROM series_points WHERE name=? AND entity IN ({','.join('?' * len(part))}) ORDER BY t"
+        for r in con.execute(sql, [name] + part):
+            points[r["entity"]].append([r["t"], r["value"]])
+    return {"meta": dict(meta) if meta else None, "points": points}
 
 
 def api_search(con, q: dict) -> dict:
@@ -127,18 +208,22 @@ def api_search(con, q: dict) -> dict:
         return {"events": []}
     rows = con.execute("""
         SELECT DISTINCT e.* FROM events e JOIN event_text t ON t.qid = e.qid
-        WHERE t.label LIKE ? ORDER BY e.sitelinks DESC LIMIT 25
+        WHERE t.label LIKE ? ORDER BY e.is_event DESC, e.sitelinks DESC LIMIT 25
     """, (f"%{term}%",)).fetchall()
     qids = [r["qid"] for r in rows]
     texts, ctry = _texts(con, qids), _countries_of(con, qids)
     return {"events": [_event_dict(r, texts, ctry) for r in rows]}
 
 
-def api_event(con, q: dict) -> dict:
-    r = con.execute("SELECT * FROM events WHERE qid=?", (q.get("qid", ""),)).fetchone()
-    if not r:
-        return {"event": None}
-    return {"event": _event_dict(r, _texts(con, [r["qid"]]), _countries_of(con, [r["qid"]]))}
+def api_themes(con, q: dict) -> dict:
+    counts = {(r[0], r[1]): r[2] for r in con.execute(
+        "SELECT theme, subtheme, COUNT(*) FROM events WHERE is_event = 1 GROUP BY theme, subtheme")}
+    themes = taxonomy_json()
+    for t in themes:
+        t["n"] = sum(v for (th, _), v in counts.items() if th == t["id"])
+        for s in t["subs"]:
+            s["n"] = counts.get((t["id"], s["id"]), 0)
+    return {"themes": themes}
 
 
 def api_stats(con, q: dict) -> dict:
@@ -148,8 +233,8 @@ def api_stats(con, q: dict) -> dict:
 
 
 ROUTES = {
-    "/api/events": api_events, "/api/countries": api_countries, "/api/series": api_series,
-    "/api/search": api_search, "/api/event": api_event, "/api/stats": api_stats,
+    "/api/events": api_events, "/api/event": api_event, "/api/countries": api_countries,
+    "/api/series": api_series, "/api/search": api_search, "/api/themes": api_themes, "/api/stats": api_stats,
 }
 
 
@@ -162,6 +247,12 @@ def make_handler(db_path: Path):
             if not self.path.startswith("/api/"):
                 return
             sys.stderr.write("%s\n" % (fmt % args))
+
+        def end_headers(self):
+            # Toujours la dernière version des fichiers de l'interface
+            if not self.path.startswith("/api/"):
+                self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
 
         def do_GET(self):
             url = urllib.parse.urlparse(self.path)

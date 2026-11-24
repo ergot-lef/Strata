@@ -100,7 +100,9 @@ class ParseEntityTests(unittest.TestCase):
 
     def test_series_csv(self):
         text = "Entity,Code,Year,population\nFrance,FRA,1950,41800000\nWorld,OWID_WRL,1950,2500000000\nWorld,OWID_WRL,1960,3000000000\n"
-        self.assertEqual(collect.read_series_csv(text, "World"), [(1950.0, 2.5e9), (1960.0, 3.0e9)])
+        self.assertEqual(collect.read_series_csv(text, "World"), [("OWID_WRL", 1950.0, 2.5e9), ("OWID_WRL", 1960.0, 3.0e9)])
+        short = "entity,code,year,gdp,gdp__annotations\nFrance,FRA,1950,5000,note\nUSSR,,1950,3000,\n"
+        self.assertEqual(collect.read_series_csv(short), [("FRA", 1950.0, 5000.0), ("USSR", 1950.0, 3000.0)])
 
 
 class ApiTests(unittest.TestCase):
@@ -109,12 +111,16 @@ class ApiTests(unittest.TestCase):
         self.con = connect(Path(self.tmp.name) / "t.db")
         c = self.con
         t = fyear(1945, 5, 8)
-        c.execute("INSERT INTO events VALUES ('Q1',?,?,11,0,'d',NULL,40,'guerre')", (t, t + 1 / 365.25))
-        c.execute("INSERT INTO events VALUES ('Q2',?,?,11,0,'d',NULL,5,'politique')", (t, t + 1 / 365.25))
-        c.execute("INSERT INTO events VALUES ('Q3',?,?,11,0,'d',NULL,9,'autre')", (t, t + 1 / 365.25))
-        c.execute("INSERT INTO events VALUES ('Q4',1800.0,1801.0,9,0,'d',NULL,9,'autre')")
+        cols = "(qid, t_lo, t_hi, precision, is_span, date_raw, end_raw, sitelinks, theme, subtheme, is_event)"
+        d = "+1945-05-08T00:00:00Z"
+        c.execute(f"INSERT INTO events {cols} VALUES ('Q1',?,?,11,0,?,NULL,40,'guerre','bataille',1)", (t, t + 1 / 365.25, d))
+        c.execute(f"INSERT INTO events {cols} VALUES ('Q2',?,?,11,0,?,NULL,5,'politique','election',1)", (t, t + 1 / 365.25, d))
+        c.execute(f"INSERT INTO events {cols} VALUES ('Q3',?,?,11,0,?,NULL,9,'autre','',1)", (t, t + 1 / 365.25, d))
+        c.execute(f"INSERT INTO events {cols} VALUES ('Q4',1800.0,1801.0,9,0,'d',NULL,9,'autre','',1)")
+        c.execute(f"INSERT INTO events {cols} VALUES ('Q5',?,?,11,0,?,NULL,99,'autre','',0)", (t, t + 1 / 365.25, d))
+        c.execute("INSERT INTO event_link VALUES ('Q1','P828','Q2')")
         c.executemany("INSERT INTO event_country VALUES (?,?)", [("Q1", "Q142"), ("Q1", "Q30"), ("Q2", "Q142")])
-        c.executemany("INSERT INTO event_text VALUES (?,?,?,?,?)", [
+        c.executemany("INSERT INTO event_text (qid, lang, label, descr, article) VALUES (?,?,?,?,?)", [
             ("Q1", "fr", "Événement test A", "desc", "Article A"), ("Q2", "fr", "Événement test B", None, None),
         ])
         c.execute("INSERT INTO entity_label VALUES ('Q142','fr','France')")
@@ -138,6 +144,36 @@ class ApiTests(unittest.TestCase):
     def test_themes_filter(self):
         d = server.api_events(self.con, {"from": "1945.0", "to": "1946.0", "countries": "Q142", "themes": "politique"})
         self.assertEqual([e["qid"] for e in d["events"]], ["Q2"])
+
+    def test_non_events_hidden_and_subthemes(self):
+        d = server.api_events(self.con, {"from": "1945.0", "to": "1946.0", "countries": "_"})
+        self.assertNotIn("Q5", {e["qid"] for e in d["events"]})
+        d = server.api_events(self.con, {"from": "1945.0", "to": "1946.0", "countries": "_", "include_other": "1"})
+        self.assertIn("Q5", {e["qid"] for e in d["events"]})
+        d = server.api_events(self.con, {"from": "1945.0", "to": "1946.0", "countries": "Q142", "sub_off": "guerre.bataille"})
+        self.assertEqual([e["qid"] for e in d["events"]], ["Q2"])
+
+    def test_event_detail_links_and_same_day(self):
+        ev = server.api_event(self.con, {"qid": "Q2"})["event"]
+        self.assertEqual([(l["kind"], l["qid"]) for l in ev["links"]], [("consequence", "Q1")])
+        self.assertIn("Q1", {e["qid"] for e in ev["same_day"]})
+        self.assertNotIn("Q5", {e["qid"] for e in ev["same_day"]})
+
+    def test_migration_from_v01(self):
+        import sqlite3
+        path = Path(self.tmp.name) / "old.db"
+        old = sqlite3.connect(path)
+        old.executescript("""CREATE TABLE events (qid TEXT PRIMARY KEY, t_lo REAL NOT NULL, t_hi REAL NOT NULL,
+            precision INTEGER, is_span INTEGER NOT NULL DEFAULT 0, date_raw TEXT, end_raw TEXT,
+            sitelinks INTEGER NOT NULL DEFAULT 0, theme TEXT NOT NULL DEFAULT 'autre');
+            CREATE TABLE event_text (qid TEXT, lang TEXT, label TEXT, descr TEXT, article TEXT, PRIMARY KEY (qid, lang));
+            CREATE TABLE series (name TEXT, t REAL, value REAL, PRIMARY KEY (name, t));
+            INSERT INTO series VALUES ('population', 1950, 2.5e9);""")
+        old.close()
+        con = connect(path)
+        self.assertEqual(con.execute("SELECT entity FROM series_points").fetchone()[0], "OWID_WRL")
+        self.assertIn("summary", {r[1] for r in con.execute("PRAGMA table_info(event_text)")})
+        con.close()
 
     def test_search_and_countries(self):
         self.assertEqual(len(server.api_search(self.con, {"q": "test"})["events"]), 2)
